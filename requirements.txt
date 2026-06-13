@@ -1,0 +1,9 @@
+aiogram
+apscheduler
+loguru
+sqlalchemy
+aiosqlite
+aiohttp
+aiofiles
+playwright
+python-dotenv

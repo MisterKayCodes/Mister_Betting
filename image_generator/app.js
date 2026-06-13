@@ -1,0 +1,244 @@
+const { useState } = React;
+
+// Preview Card Before (Dash) and After (Score)
+const PreviewCard = ({ match, isFinished }) => {
+    return (
+        <div className="card-container preview-card">
+            <div className="preview-header">
+                <span className="back-arrow">←</span>
+                <span className="header-title">Football ▾</span>
+                <div className="header-actions">⏏ ☆</div>
+            </div>
+            
+            <div className="preview-league">
+                <span>☆</span>
+                <span className="league-name">{match.league}</span>
+                <span>></span>
+            </div>
+
+            <div className="match-display">
+                <div className="team-box">
+                    <div className="team-logo">{match.homeTeam.substring(0, 3).toUpperCase()}</div>
+                    <div className="team-name">{match.homeTeam}</div>
+                </div>
+                
+                <div className="score-area">
+                    <div className="date-time">{match.date} {match.time}</div>
+                    <div className="score-text">
+                        {isFinished ? `${match.homeScore} - ${match.awayScore}` : '-'}
+                    </div>
+                    {isFinished && <div className="finished-text">Finished</div>}
+                </div>
+                
+                <div className="team-box">
+                    <div className="team-logo">{match.awayTeam.substring(0, 3).toUpperCase()}</div>
+                    <div className="team-name">{match.awayTeam}</div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// Open Bet Slip (Before match) - Cashout AVAILABLE, Blue button
+const OpenBetSlip = ({ match, hideOdds }) => {
+    // Calculate estimated cashout value (usually less than stake, around 95% before match)
+    const estimatedCashout = match.stake * 0.95; // $190.00 for $200 stake
+    
+    return (
+        <div className="card-container slip-container">
+            <div className="slip-header">
+                <div className="balance-area">${match.balance ? match.balance.toFixed(2) : '123.02'}</div>
+                <div className="tabs">
+                    <div className="tab active">Open Bets (1)</div>
+                    <div className="tab">Bet History</div>
+                </div>
+            </div>
+            <div className="sub-tabs">
+                <div className="sub-tab active">All</div>
+                <div className="sub-tab">Cashout Available</div>
+                <div className="sub-tab">Live Games</div>
+            </div>
+
+            <div className="info-banner">
+                Auto Cashout available now! 
+                <span className="info-link">How to play?</span>
+            </div>
+
+            <div className="bet-card">
+                <div className="bet-card-header">
+                    <span>Singles</span>
+                    <span className="bet-actions">↺ Rebet ⇄ ⚙ Edit Bet</span>
+                </div>
+                <div className="bet-details">
+                    <div className="bet-market">
+                        {hideOdds ? (
+                            <div className="black-box-block">⚽ Home @??? 1X2</div>
+                        ) : (
+                            <div>⚽ Home <span className="odds-value"> @{match.odds} </span> 1X2</div>
+                        )}
+                    </div>
+                    <div className="bet-teams">{match.homeTeam} vs {match.awayTeam}</div>
+                    <div className="bet-date">{match.date} {match.time}</div>
+                </div>
+                <div className="hide-details">Hide Match Details ▴</div>
+                <div className="divider"></div>
+                <div className="bet-stake-row">
+                    <span>Stake</span>
+                    <span className="stake-value">${match.stake.toFixed(2)}</span>
+                </div>
+                <div className="bet-pot-win-row">
+                    <span>Potential Win</span>
+                    {hideOdds ? (
+                        <div className="black-box-block-long">$????</div>
+                    ) : (
+                        <span className="payout-value">${match.payout.toFixed(2)}</span>
+                    )}
+                </div>
+                
+                {/* Cashout button - ALWAYS SHOWS AMOUNT, never "Unavailable" */}
+                <div className="cashout-btn">
+                    Cashout ${estimatedCashout.toFixed(2)}
+                </div>
+            </div>
+            
+            <div className="bottom-nav">
+                <div className="nav-item">Home</div>
+                <div className="nav-item">Menu</div>
+                <div className="nav-item">Games</div>
+                <div className="nav-item active">Open Bets</div>
+                <div className="nav-item">Me</div>
+            </div>
+        </div>
+    );
+};
+
+// Won Bet Slip (After match) - with fixed checkmark/cross positioning
+const WonBetSlip = ({ match, isWin }) => {
+    return (
+        <div className="card-container slip-container">
+            <div className={`won-header ${isWin ? 'win' : 'loss'}`}>
+                <div className="back-btn">{"<"} Back</div>
+                Ticket Details
+                <div className="home-icon">🏠</div>
+            </div>
+            
+            <div className="ticket-info">
+                <div className="ticket-id-row">
+                    <span>Ticket ID: {Math.floor(Math.random() * 900000) + 100000}</span>
+                    <span>{match.date}, {match.time}</span>
+                </div>
+                <div className="singles-row">
+                    <span>Singles</span>
+                    {isWin ? <span className="won-badge">🏆 Won</span> : <span className="lost-badge">❌ Lost</span>}
+                </div>
+                <div className="return-row">
+                    <span>Total Return</span>
+                    {isWin ? <span className="return-amount win">${match.payout.toFixed(2)}</span> : <span className="return-amount loss">$0.00</span>}
+                </div>
+                <div className="dotted-divider"></div>
+                <div className="stake-odds-row">
+                    <span>Total Stake</span>
+                    <span>${match.stake.toFixed(2)}</span>
+                </div>
+                <div className="stake-odds-row">
+                    <span>Total Odds</span>
+                    <span>{match.odds}</span>
+                </div>
+            </div>
+
+            <div className="congrats-banner">
+                <div className="congrats-content">
+                    <span className="coin-icon">🪙</span> 
+                    <span className="congrats-text">
+                        {isWin ? "Congratulations! admin_user" : "Better luck next time!"}
+                    </span>
+                </div>
+                {isWin && <div className="show-off-btn">Show Off</div>}
+            </div>
+
+            <div className="won-bet-details">
+                <div className="bet-detail-section">
+                    <div className="match-time">{match.date}, 18:45</div>
+                    <div className="match-title">{match.homeTeam} v {match.awayTeam}</div>
+                    <div className="match-tracker">📈 Match Tracker</div>
+                    <div className="ft-score">FT Score {match.homeScore}:{match.awayScore}</div>
+                    
+                    {/* Fixed positioning for checkmark/cross - now properly aligned inside the box */}
+                    <div className={`pick-box ${isWin ? 'win-pick' : 'loss-pick'}`}>
+                        <div className={`pick-icon ${isWin ? 'win-icon' : 'loss-icon'}`}>
+                            {isWin ? '✓' : '✗'}
+                        </div>
+                        <div className="pick-content">
+                            <div className="pick-text">
+                                Pick Correct Score {match.claimedHomeScore}:{match.claimedAwayScore} @{match.odds}
+                                <span className={`pick-status ${isWin ? 'win-status' : 'loss-status'}`}>{isWin ? '✓' : '✗'}</span>
+                            </div>
+                            <div className="pick-details">
+                                Market: Correct Score<br/>
+                                Outcome: Correct Score {match.homeScore}:{match.awayScore}
+                            </div>
+                        </div>
+                        {isWin && <div className="trophy-icon">🏆</div>}
+                    </div>
+                </div>
+                
+                <div className="bet-footer-link">
+                    <span>Number of Bets: 1</span>
+                    <span>Bet Details ></span>
+                </div>
+                
+                <div className="bet-footer-link">
+                    <span>Check Transaction History</span>
+                    <span>></span>
+                </div>
+            </div>
+            
+            <div className="delete-ticket">
+                Delete Ticket
+            </div>
+        </div>
+    );
+};
+
+const App = () => {
+    const [view, setView] = useState('slip-before');
+    
+    const matchData = {
+        league: "VICTORIA PREMIER LEAGUE 2 - ROUND 17",
+        homeTeam: "Goulburn Valley Suns",
+        awayTeam: "Eastern Lions",
+        date: "13/06/2026",
+        time: "08:00 AM",
+        homeScore: 2,
+        awayScore: 2,
+        claimedHomeScore: 2,
+        claimedAwayScore: 2,
+        stake: 200.00,
+        odds: 14.50,
+        payout: 200.00 * 14.50,
+        balance: 123.02,
+    };
+
+    return (
+        <div>
+            <div className="controls">
+                <button onClick={() => setView('preview-before')}>1. Preview (Before)</button>
+                <button onClick={() => setView('slip-before')}>2. Slip (Before)</button>
+                <button onClick={() => setView('preview-after')}>3. Preview (After)</button>
+                <button onClick={() => setView('slip-won')}>4. Slip (Won)</button>
+                <button onClick={() => setView('slip-lost')}>5. Slip (Lost)</button>
+            </div>
+            
+            <div className="cards-wrapper">
+                {view === 'preview-before' && <PreviewCard match={matchData} isFinished={false} />}
+                {view === 'slip-before' && <OpenBetSlip match={matchData} hideOdds={true} />}
+                {view === 'preview-after' && <PreviewCard match={matchData} isFinished={true} />}
+                {view === 'slip-won' && <WonBetSlip match={matchData} isWin={true} />}
+                {view === 'slip-lost' && <WonBetSlip match={{...matchData, claimedHomeScore: 1, claimedAwayScore: 2}} isWin={false} />}
+            </div>
+        </div>
+    );
+};
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);

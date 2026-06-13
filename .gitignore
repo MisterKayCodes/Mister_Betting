@@ -1,0 +1,32 @@
+# Credentials and Secrets
+.env
+
+# Databases and Storage
+*.db
+bot.db
+
+# Logs
+*.log
+bot_debug.log
+
+# Generated Assets / Media Output
+output_images/
+
+# Python Virtual Environments (in case you create one later)
+venv/
+.venv/
+env/
+ENV/
+
+# Python caching
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Node.js / JavaScript (for your image_generator folder if you install packages)
+node_modules/
+.eslintcache
+
+# OS generated files
+.DS_Store
+Thumbs.db
