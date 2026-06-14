@@ -21,7 +21,7 @@ class InterceptHandler(logging.Handler):
             level = record.levelno
         logger.opt(exception=record.exc_info).log(level, record.getMessage())
 
-logging.getLogger("apscheduler").setLevel(logging.DEBUG)
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
 logging.getLogger("apscheduler").addHandler(InterceptHandler())
 
 # Log to file AND console
