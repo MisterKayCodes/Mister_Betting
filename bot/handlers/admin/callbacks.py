@@ -187,28 +187,81 @@ async def _handle_clear_db(cb: CallbackQuery):
 
 
 async def _handle_view_jobs(cb: CallbackQuery):
-    """View upcoming matches"""
+    """Show rich per-match step dashboard with posted flags and countdown timers."""
+    from datetime import datetime, timedelta
     from bot.core.database import async_session, Match
     from sqlalchemy import select
-    
+
+    now = datetime.utcnow()
+
     async with async_session() as session:
         result = await session.execute(
             select(Match).where(Match.is_finished == False).order_by(Match.kickoff_time.asc())
         )
         matches = result.scalars().all()
-    
+
     if not matches:
-        await cb.message.answer("📅 No upcoming matches in the database.")
-    else:
-        lines = [f"📅 <b>Upcoming Scheduled Matches ({len(matches)}):</b>\n"]
-        for m in matches:
-            lines.append(
-                f"⚽ <b>{m.home_team} vs {m.away_team}</b>\n"
-                f"   🕐 {m.kickoff_time.strftime('%d/%m/%Y %H:%M UTC')}\n"
-                f"   📊 {m.league_name}\n"
-                f"   Step 1 posted: {'✅' if m.preview_posted else '❌'}\n"
-            )
-        await cb.message.answer("\n".join(lines), parse_mode="HTML")
+        await cb.message.answer("📅 No active matches in the database.\n\nUse <b>🔄 Sync Matches Now</b> to fetch some.", parse_mode="HTML")
+        await cb.answer()
+        return
+
+    def _fmt_countdown(target: datetime) -> str:
+        """Return a human-readable countdown or OVERDUE label."""
+        delta = target - now
+        if delta.total_seconds() <= 0:
+            return "⏰ <i>OVERDUE</i>"
+        hours, rem = divmod(int(delta.total_seconds()), 3600)
+        mins = rem // 60
+        if hours >= 24:
+            days = hours // 24
+            return f"in {days}d {hours % 24}h"
+        if hours > 0:
+            return f"in {hours}h {mins}m"
+        return f"in {mins}m"
+
+    def _step_line(label: str, fire_at: datetime, posted: bool, msg_id: int | None, retries: int) -> str:
+        status = "✅ Posted" if posted else "❌ Not yet"
+        msg_tag = f" <code>[msg:{msg_id}]</code>" if posted and msg_id else ""
+        retry_tag = f" ⚠️ {retries} retries" if retries and not posted else ""
+        timer = "" if posted else f"  ➜ {_fmt_countdown(fire_at)}"
+        return f"  {label}: {status}{msg_tag}{retry_tag}{timer}"
+
+    chunks = []
+    for m in matches:
+        k = m.kickoff_time
+        t1 = k - timedelta(hours=7)
+        t2 = k - timedelta(hours=2)
+        t3 = k - timedelta(hours=1)
+        t5 = k + timedelta(hours=1, minutes=50)
+        t4 = k + timedelta(hours=2, minutes=30)
+
+        outcome_tag = ""
+        if m.is_win is not None:
+            outcome_tag = " 🏆 WIN" if m.is_win else " ❌ LOSS"
+
+        header = (
+            f"⚽ <b>{m.home_team} vs {m.away_team}</b>{outcome_tag}\n"
+            f"🏆 {m.league_name}\n"
+            f"🕐 Kickoff: {k.strftime('%d/%m/%Y %H:%M UTC')}"
+        )
+
+        steps = "\n".join([
+            _step_line("Step 1 Preview   ", t1, m.preview_posted,       m.step1_message_id, m.step1_retries or 0),
+            _step_line("Step 2 Urgency   ", t2, m.urgency_posted,       m.step2_message_id, m.step2_retries or 0),
+            _step_line("Step 3 Black Box ", t3, m.before_slip_posted,   m.step3_message_id, m.step3_retries or 0),
+            _step_line("Step 4 Result    ", t4, m.result_preview_posted,m.step4_message_id, m.step4_retries or 0),
+            _step_line("Step 5 Final Slip", t5, m.final_slip_posted,    m.step5_message_id, m.step5_retries or 0),
+        ])
+
+        chunks.append(f"{header}\n{steps}")
+
+    # Telegram has a 4096 char limit — send each match as its own message
+    await cb.message.answer(
+        f"📅 <b>Active Match Dashboard ({len(matches)} match{'es' if len(matches) != 1 else ''})</b>",
+        parse_mode="HTML"
+    )
+    for chunk in chunks:
+        await cb.message.answer(chunk, parse_mode="HTML")
     await cb.answer()
 
 

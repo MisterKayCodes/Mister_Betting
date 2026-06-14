@@ -34,7 +34,12 @@ class TimelineScheduler:
             self._daily_health_report, "cron", hour=8, minute=0,
             id="health_report", replace_existing=True
         )
-        logger.info("[SCHEDULER] Daily scan, 48h sync, and health report jobs registered.")
+        # Every 14 days at 03:00 UTC — Delete output images older than 7 days
+        self.scheduler.add_job(
+            self._clean_old_images, "interval", days=14,
+            id="image_cleaner", replace_existing=True
+        )
+        logger.info("[SCHEDULER] Daily scan, 48h sync, health report, and image cleaner jobs registered.")
 
     async def _daily_match_scan(self):
         logger.info("[SCHEDULER] Running daily match scan...")
@@ -149,5 +154,35 @@ class TimelineScheduler:
                     parse_mode="HTML"
                 )
                 logger.success("[SCHEDULER] Daily health report cleanly dispatched to admin.")
+    async def _clean_old_images(self):
+        """
+        Universal image cleaner — runs every 14 days.
+        Deletes any PNG in output_images/ that is older than 7 days.
+        This keeps disk usage permanently in check without manual work.
+        """
+        import os, time
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        img_dir = os.path.join(base_dir, "output_images")
+        if not os.path.isdir(img_dir):
+            return
+
+        cutoff = time.time() - (7 * 24 * 60 * 60)  # 7 days ago
+        deleted = 0
+        errors = 0
+        for fname in os.listdir(img_dir):
+            if not fname.lower().endswith(".png"):
+                continue
+            fpath = os.path.join(img_dir, fname)
+            try:
+                if os.path.getmtime(fpath) < cutoff:
+                    os.remove(fpath)
+                    deleted += 1
             except Exception as e:
-                logger.error(f"[SCHEDULER] Failed to send health report over Telegram network: {e}")
+                logger.warning(f"[CLEANER] Could not delete {fname}: {e}")
+                errors += 1
+
+        logger.success(
+            f"[CLEANER] 🧹 Image cleanup done — {deleted} file(s) deleted, "
+            f"{errors} error(s). Images newer than 7 days are untouched."
+        )
+
