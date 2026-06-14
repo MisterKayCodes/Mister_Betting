@@ -80,7 +80,7 @@ class TimelineScheduler:
             if run_at > now:
                 self.scheduler.add_job(
                     fn, "date", run_date=run_at,
-                    args=args, id=job_id, replace_existing=True
+                    args=args, id=job_id, replace_existing=True, misfire_grace_time=None
                 )
                 logger.info(f"[SCHEDULER] Job {job_id} scheduled for {run_at.strftime('%Y-%m-%d %H:%M UTC')}")
             else:
@@ -108,7 +108,7 @@ class TimelineScheduler:
                 
                 self.scheduler.add_job(
                     fn, "date", run_date=rush_time,
-                    args=args, id=f"rush_{job_id}", replace_existing=True
+                    args=args, id=f"rush_{job_id}", replace_existing=True, misfire_grace_time=None
                 )
                 logger.info(f"[RUSH MODE] Scheduled catch-up {job_id} for {rush_time.strftime('%Y-%m-%d %H:%M UTC')}")
                 rush_time += timedelta(minutes=random.randint(5, 11))
