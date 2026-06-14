@@ -139,21 +139,26 @@ class TimelineScheduler:
         logger.info("[SCHEDULER] Creating daily system health status report...")
         from bot.core.database import async_session, AppConfig
         from sqlalchemy import select
-        
+
         async with async_session() as session:
-            row = (await session.execute(select(AppConfig).where(AppConfig.key == "admin_chat_id"))).scalar_one_or_none()
+            row = (await session.execute(
+                select(AppConfig).where(AppConfig.key == "admin_chat_id")
+            )).scalar_one_or_none()
             if not row:
                 logger.warning("[SCHEDULER] Daily health report aborted: admin_chat_id not registered in DB.")
                 return
-            
+
             admin_id = int(row.value)
             try:
                 await self.bot.send_message(
-                    chat_id=admin_id, 
+                    chat_id=admin_id,
                     text="🤖 <b>Mister Betting Daily Health Status</b>\n\n✅ Scheduler Engine: Active\n✅ PM2 Worker Process: Healthy",
                     parse_mode="HTML"
                 )
                 logger.success("[SCHEDULER] Daily health report cleanly dispatched to admin.")
+            except Exception as e:
+                logger.error(f"[SCHEDULER] Failed to send health report over Telegram network: {e}")
+
     async def _clean_old_images(self):
         """
         Universal image cleaner — runs every 14 days.
