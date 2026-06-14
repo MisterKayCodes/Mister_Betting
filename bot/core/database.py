@@ -1,8 +1,9 @@
 # bot/core/database.py
-from sqlalchemy import Column, Integer, String, Boolean, DateTime
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
 from bot.core.config import DATABASE_URL
+from loguru import logger
 
 Base = declarative_base()
 
@@ -16,39 +17,106 @@ class Match(Base):
     kickoff_time = Column(DateTime)
     
     # Store fetched odds data
-    odds_data = Column(String) # JSON serialized odds for correct scores
-    
+    odds_data = Column(String)  # JSON serialized odds for correct scores
+
     # State tracking for match completion
     is_finished = Column(Boolean, default=False)
     real_home_score = Column(Integer, nullable=True)
     real_away_score = Column(Integer, nullable=True)
-    
+
     # Persistent Step Posting Flags (Survives PM2 Restarts)
-    preview_posted = Column(Boolean, default=False)       # Step 1
-    urgency_posted = Column(Boolean, default=False)       # Step 2
-    before_slip_posted = Column(Boolean, default=False)   # Step 3
-    final_slip_posted = Column(Boolean, default=False)    # Step 5
+    preview_posted      = Column(Boolean, default=False)  # Step 1
+    urgency_posted      = Column(Boolean, default=False)  # Step 2
+    before_slip_posted  = Column(Boolean, default=False)  # Step 3
+    final_slip_posted   = Column(Boolean, default=False)  # Step 5
     result_preview_posted = Column(Boolean, default=False) # Step 4
-    
+
+    # ── NEW: Telegram message IDs for each posted step ──────────────────────
+    # Storing these lets us VERIFY a post actually landed in the channel.
+    step1_message_id = Column(Integer, nullable=True)
+    step2_message_id = Column(Integer, nullable=True)
+    step3_message_id = Column(Integer, nullable=True)
+    step4_message_id = Column(Integer, nullable=True)
+    step5_message_id = Column(Integer, nullable=True)
+
+    # ── NEW: Retry counters — how many times each step has been attempted ────
+    step1_retries = Column(Integer, default=0)
+    step2_retries = Column(Integer, default=0)
+    step3_retries = Column(Integer, default=0)
+    step4_retries = Column(Integer, default=0)
+    step5_retries = Column(Integer, default=0)
+
     # Win/Loss Outcome Status
     is_win = Column(Boolean, nullable=True)
 
+    # Claimed score fields (used by WinLossEngine for LOSS illusion)
+    claimed_home_score = Column(Integer, nullable=True)
+    claimed_away_score = Column(Integer, nullable=True)
+
+
 class AppConfig(Base):
     __tablename__ = "app_config"
-    
-    key = Column(String, primary_key=True)
+    key   = Column(String, primary_key=True)
     value = Column(String)
 
-# Fix database URL for async support
+
+# ── Fix DATABASE_URL for async SQLite ──────────────────────────────────────
 db_url = DATABASE_URL
 if db_url.startswith("sqlite://") and "+aiosqlite" not in db_url:
     db_url = db_url.replace("sqlite://", "sqlite+aiosqlite://")
 
-# Database Engine initialization Setup
-engine_db = create_async_engine(db_url, echo=False)
+engine_db   = create_async_engine(db_url, echo=False)
 async_session = sessionmaker(engine_db, class_=AsyncSession, expire_on_commit=False)
 
+
+# ── Column definitions for migration ──────────────────────────────────────
+# Any column added here will be automatically added to an existing database
+# that is missing it. This means old VPS databases never crash on deploy.
+_REQUIRED_COLUMNS = {
+    # column_name              → SQL definition
+    "urgency_posted":          "BOOLEAN DEFAULT 0",
+    "before_slip_posted":      "BOOLEAN DEFAULT 0",
+    "final_slip_posted":       "BOOLEAN DEFAULT 0",
+    "result_preview_posted":   "BOOLEAN DEFAULT 0",
+    "preview_posted":          "BOOLEAN DEFAULT 0",
+    "claimed_home_score":      "INTEGER",
+    "claimed_away_score":      "INTEGER",
+    "step1_message_id":        "INTEGER",
+    "step2_message_id":        "INTEGER",
+    "step3_message_id":        "INTEGER",
+    "step4_message_id":        "INTEGER",
+    "step5_message_id":        "INTEGER",
+    "step1_retries":           "INTEGER DEFAULT 0",
+    "step2_retries":           "INTEGER DEFAULT 0",
+    "step3_retries":           "INTEGER DEFAULT 0",
+    "step4_retries":           "INTEGER DEFAULT 0",
+    "step5_retries":           "INTEGER DEFAULT 0",
+}
+
+
+async def _migrate_db(conn):
+    """
+    Checks the live 'matches' table for missing columns and adds them.
+    This is safe to call on every startup — it skips columns that already exist.
+    """
+    result = await conn.execute(text("PRAGMA table_info(matches)"))
+    rows = result.fetchall()
+    if not rows:
+        return  # Table doesn't exist yet; create_all will handle it
+
+    existing_columns = {row[1] for row in rows}  # row[1] = column name
+
+    for col_name, col_def in _REQUIRED_COLUMNS.items():
+        if col_name not in existing_columns:
+            await conn.execute(
+                text(f"ALTER TABLE matches ADD COLUMN {col_name} {col_def}")
+            )
+            logger.info(f"[DB MIGRATION] Added missing column: matches.{col_name}")
+
+
 async def init_db():
-    """Initialize database - create all tables"""
+    """Initialize database — create all tables, then migrate missing columns."""
     async with engine_db.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await _migrate_db(conn)
+    logger.success("[DB] Schema ready and fully migrated.")

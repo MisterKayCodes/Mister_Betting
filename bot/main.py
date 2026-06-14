@@ -11,6 +11,19 @@ from bot.handlers.admin import admin_router
 from bot.services.scheduler import TimelineScheduler
 from bot.services.telegram_logger import setup_telegram_debugger
 
+import logging
+
+class InterceptHandler(logging.Handler):
+    def emit(self, record):
+        try:
+            level = logger.level(record.levelname).name
+        except ValueError:
+            level = record.levelno
+        logger.opt(exception=record.exc_info).log(level, record.getMessage())
+
+logging.getLogger("apscheduler").setLevel(logging.DEBUG)
+logging.getLogger("apscheduler").addHandler(InterceptHandler())
+
 # Log to file AND console
 logger.add("bot_debug.log", rotation="10 MB", retention="14 days",
            format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}")
