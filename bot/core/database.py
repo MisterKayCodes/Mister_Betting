@@ -39,6 +39,16 @@ class AppConfig(Base):
     key = Column(String, primary_key=True)
     value = Column(String)
 
+# Fix database URL for async support
+db_url = DATABASE_URL
+if db_url.startswith("sqlite://") and "+aiosqlite" not in db_url:
+    db_url = db_url.replace("sqlite://", "sqlite+aiosqlite://")
+
 # Database Engine initialization Setup
-engine_db = create_async_engine(DATABASE_URL, echo=False)
+engine_db = create_async_engine(db_url, echo=False)
 async_session = sessionmaker(engine_db, class_=AsyncSession, expire_on_commit=False)
+
+async def init_db():
+    """Initialize database - create all tables"""
+    async with engine_db.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
