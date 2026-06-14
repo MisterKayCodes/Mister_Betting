@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, ForeignKey
+# bot/core/database.py
+from sqlalchemy import Column, Integer, String, Boolean, DateTime
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
 from bot.core.config import DATABASE_URL
@@ -14,39 +15,30 @@ class Match(Base):
     league_name = Column(String)
     kickoff_time = Column(DateTime)
     
-    # Store fetched odds
+    # Store fetched odds data
     odds_data = Column(String) # JSON serialized odds for correct scores
     
-    # State tracking
+    # State tracking for match completion
     is_finished = Column(Boolean, default=False)
     real_home_score = Column(Integer, nullable=True)
     real_away_score = Column(Integer, nullable=True)
     
-    # Bot's "prediction"
-    claimed_home_score = Column(Integer, nullable=True)
-    claimed_away_score = Column(Integer, nullable=True)
-    is_win = Column(Boolean, nullable=True) # Did the bot claim to win this?
+    # Persistent Step Posting Flags (Survives PM2 Restarts)
+    preview_posted = Column(Boolean, default=False)       # Step 1
+    urgency_posted = Column(Boolean, default=False)       # Step 2
+    before_slip_posted = Column(Boolean, default=False)   # Step 3
+    final_slip_posted = Column(Boolean, default=False)    # Step 5
+    result_preview_posted = Column(Boolean, default=False) # Step 4
     
-    # Posting status
-    preview_posted = Column(Boolean, default=False)
-    before_slip_posted = Column(Boolean, default=False)
-    result_preview_posted = Column(Boolean, default=False)
-    after_slip_posted = Column(Boolean, default=False)
+    # Win/Loss Outcome Status
+    is_win = Column(Boolean, nullable=True)
 
 class AppConfig(Base):
     __tablename__ = "app_config"
+    
     key = Column(String, primary_key=True)
     value = Column(String)
 
-# Fix the URL for async SQLite
-if DATABASE_URL and DATABASE_URL.startswith("sqlite://"):
-    ASYNC_DATABASE_URL = DATABASE_URL.replace("sqlite://", "sqlite+aiosqlite://")
-else:
-    ASYNC_DATABASE_URL = DATABASE_URL or "sqlite+aiosqlite:///bot.db"
-
-engine = create_async_engine(ASYNC_DATABASE_URL, echo=False)
-async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-async def init_db():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+# Database Engine initialization Setup
+engine_db = create_async_engine(DATABASE_URL, echo=False)
+async_session = sessionmaker(engine_db, class_=AsyncSession, expire_on_commit=False)
