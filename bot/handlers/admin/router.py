@@ -10,13 +10,19 @@ from bot.core.config import ADMIN_USERNAME
 admin_router = Router()
 
 # Pending text replies storage (shared across handlers)
-_pending_set: dict = {}  # {user_id: "channel" | "match"}
+_pending_set: dict = {}  # {user_id: "channel" | "match" | "vip_price"}
+
 
 
 def is_admin(username: str) -> bool:
-    """Check if user is admin"""
+    """Check if user is admin. Fallback to ADMIN_USERNAME env var."""
     username = (username or "").lower().lstrip("@")
-    return username == ADMIN_USERNAME
+    if username == ADMIN_USERNAME:
+        return True
+    # Other admin checks (DB-based) are async — many handlers call is_admin synchronously,
+    # so keep env fallback here. Admins created via /start will also set ADMIN_USERNAME env
+    # fallback by design. For DB-driven checks, handlers should explicitly query the DB.
+    return False
 
 
 def main_keyboard() -> InlineKeyboardMarkup:

@@ -16,7 +16,7 @@ async def cmd_start(message: types.Message):
     logger.info(f"[BOT] /start from @{username} (ID: {message.from_user.id})")
 
     if is_admin(username):
-        from bot.core.database import async_session, AppConfig
+        from bot.core.database import async_session, AppConfig, Admin
         from sqlalchemy import select
         
         async with async_session() as session:
@@ -28,6 +28,16 @@ async def cmd_start(message: types.Message):
                 row.value = str(message.from_user.id)
             else:
                 session.add(AppConfig(key="admin_chat_id", value=str(message.from_user.id)))
+            await session.commit()
+
+            # Also ensure an Admin row exists for this username
+            q2 = await session.execute(select(Admin).where(Admin.username == (message.from_user.username or '').lower()))
+            admin_row = q2.scalar_one_or_none()
+            if admin_row:
+                admin_row.chat_id = str(message.from_user.id)
+                admin_row.is_superadmin = True
+            else:
+                session.add(Admin(username=(message.from_user.username or '').lower(), chat_id=str(message.from_user.id), is_superadmin=True))
             await session.commit()
 
         await message.answer(

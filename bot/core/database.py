@@ -120,3 +120,64 @@ async def init_db():
         await conn.run_sync(Base.metadata.create_all)
         await _migrate_db(conn)
     logger.success("[DB] Schema ready and fully migrated.")
+
+
+# New models: VIP pricing, price history, whitelist, admins
+class VIPPricing(Base):
+    __tablename__ = "vip_pricing"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, default="default")
+    base_price = Column(Integer, nullable=False)  # store cents or whole number
+    effective_from = Column(DateTime, nullable=True)
+    effective_to = Column(DateTime, nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, server_default=text("(datetime('now'))"))
+
+
+class PriceHistory(Base):
+    __tablename__ = "price_history"
+    id = Column(Integer, primary_key=True, index=True)
+    pricing_id = Column(Integer)
+    old_price = Column(Integer)
+    new_price = Column(Integer)
+    change_reason = Column(String)
+    changed_by = Column(String)
+    changed_at = Column(DateTime, server_default=text("(datetime('now'))"))
+
+
+class LeagueWhitelist(Base):
+    __tablename__ = "leagues_whitelist"
+    id = Column(Integer, primary_key=True, index=True)
+    api_football_id = Column(Integer, unique=True, index=True)
+    league_name = Column(String)
+    country = Column(String)
+    enabled = Column(Boolean, default=True)
+    added_at = Column(DateTime, server_default=text("(datetime('now'))"))
+
+
+class Admin(Base):
+    __tablename__ = "admins"
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True)
+    chat_id = Column(String)
+    is_superadmin = Column(Boolean, default=False)
+    created_at = Column(DateTime, server_default=text("(datetime('now'))"))
+
+
+class LeagueReport(Base):
+    __tablename__ = "league_reports"
+    id = Column(Integer, primary_key=True, index=True)
+    fixture_id = Column(Integer, nullable=True)
+    api_football_league_id = Column(Integer, nullable=True)
+    league_name = Column(String)
+    report_reason = Column(String)
+    reported_at = Column(DateTime, server_default=text("(datetime('now'))"))
+    notified_admin = Column(Boolean, default=False)
+
+
+class VIPCompensation(Base):
+    __tablename__ = "vip_compensation"
+    id = Column(Integer, primary_key=True, index=True)
+    reason = Column(String)
+    games_awarded = Column(Integer, default=0)
+    created_at = Column(DateTime, server_default=text("(datetime('now'))"))

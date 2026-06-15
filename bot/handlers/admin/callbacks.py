@@ -12,6 +12,10 @@ from aiogram.types import CallbackQuery
 from loguru import logger
 
 from bot.handlers.admin.router import admin_router, is_admin, _pending_set, main_keyboard
+from bot.core.database import async_session, LeagueWhitelist, LeagueReport
+from sqlalchemy import select
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
 
 
 @admin_router.callback_query(F.data.startswith("adm_"))
@@ -37,6 +41,18 @@ async def admin_callbacks(cb: CallbackQuery):
         await _handle_clear_db(cb)
     elif data == "adm_view_jobs":
         await _handle_view_jobs(cb)
+    elif data.startswith("adm_toggle_whitelist:"):
+        await _handle_toggle_whitelist(cb, data)
+    elif data.startswith("adm_report_league:"):
+        await _handle_report_league(cb, data)
+    elif data.startswith("adm_blacklist:"):
+        await _handle_blacklist_league(cb, data)
+    elif data.startswith("adm_blacklist_report:"):
+        await _handle_blacklist_report(cb, data)
+    elif data == "adm_set_vip_price":
+        await _handle_set_vip_price(cb)
+    elif data == "adm_manage_whitelist":
+        await _handle_manage_whitelist(cb)
 
 
 async def _handle_status(cb: CallbackQuery):
@@ -160,6 +176,137 @@ async def _handle_sync_matches(cb: CallbackQuery):
         await cb.message.answer(f"❌ Sync failed: {e}")
 
 
+async def _handle_set_vip_price(cb: CallbackQuery):
+    """Prompt admin to set the VIP base price"""
+    await cb.message.answer(
+        "💰 <b>Set VIP Base Price</b>\n\nSend a numeric value (e.g. 100 or 79.99).\nThis will become the default base price used to calculate weekend discounts.",
+        parse_mode="HTML"
+    )
+    _pending_set[cb.from_user.id] = "vip_price"
+    await cb.answer()
+
+
+async def _handle_manage_whitelist(cb: CallbackQuery):
+    """Show current whitelist entries with toggle and report buttons."""
+    async with async_session() as session:
+        rows = (await session.execute(select(LeagueWhitelist))).scalars().all()
+
+    if not rows:
+        await cb.message.answer("Whitelist is empty. Use Sync Matches to populate or add entries manually.")
+        await cb.answer()
+        return
+
+    for r in rows:
+        status = "Enabled" if r.enabled else "Disabled"
+        text = f"ID:{r.api_football_id}  {r.league_name} ({r.country}) — {status}"
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=("Disable" if r.enabled else "Enable"), callback_data=f"adm_toggle_whitelist:{r.api_football_id}"),
+             InlineKeyboardButton(text="Report Issue", callback_data=f"adm_report_league:{r.api_football_id}")]
+        ])
+        await cb.message.answer(text, reply_markup=kb)
+
+    await cb.answer()
+
+
+async def _handle_toggle_whitelist(cb: CallbackQuery, data: str):
+    """Toggle enabled flag for a league in the whitelist"""
+    try:
+        api_id = int(data.split(":",1)[1])
+    except Exception:
+        await cb.answer("Invalid league id.", show_alert=True)
+        return
+
+    async with async_session() as session:
+        q = await session.execute(select(LeagueWhitelist).where(LeagueWhitelist.api_football_id == api_id))
+        row = q.scalar_one_or_none()
+        if row:
+            row.enabled = not bool(row.enabled)
+            await session.commit()
+            await cb.answer(f"Whitelist {'enabled' if row.enabled else 'disabled'} for {row.league_name}", show_alert=True)
+            await cb.message.edit_text(f"ID:{row.api_football_id}  {row.league_name} ({row.country}) — {'Enabled' if row.enabled else 'Disabled'}")
+        else:
+            # create as enabled
+            new = LeagueWhitelist(api_football_id=api_id, league_name=f"League {api_id}", country="Unknown", enabled=True)
+            session.add(new)
+            await session.commit()
+            await cb.answer(f"Whitelist entry created and enabled for league id {api_id}", show_alert=True)
+            await cb.message.edit_text(f"ID:{new.api_football_id}  {new.league_name} ({new.country}) — Enabled")
+
+
+async def _handle_report_league(cb: CallbackQuery, data: str):
+    """Create a league report and notify admin with quick blacklist action"""
+    try:
+        api_id = int(data.split(":",1)[1])
+    except Exception:
+        await cb.answer("Invalid league id.", show_alert=True)
+        return
+
+    async with async_session() as session:
+        q = await session.execute(select(LeagueWhitelist).where(LeagueWhitelist.api_football_id == api_id))
+        lw = q.scalar_one_or_none()
+        league_name = lw.league_name if lw else f"League {api_id}"
+        # insert report
+        session.add(LeagueReport(fixture_id=None, api_football_league_id=api_id, league_name=league_name, report_reason=f"Reported by admin @{cb.from_user.username}"))
+        await session.commit()
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚫 Blacklist League", callback_data=f"adm_blacklist:{api_id}"),
+         InlineKeyboardButton(text="❌ Ignore", callback_data="adm_view_jobs")]
+    ])
+    await cb.message.answer(f"Report logged for {league_name} (id {api_id}). You can blacklist this league to prevent future picks.", reply_markup=kb)
+    await cb.answer()
+
+
+async def _handle_blacklist_league(cb: CallbackQuery, data: str):
+    """Blacklist (disable) a league so it won't be selected"""
+    try:
+        api_id = int(data.split(":",1)[1])
+    except Exception:
+        await cb.answer("Invalid league id.", show_alert=True)
+        return
+
+    async with async_session() as session:
+        q = await session.execute(select(LeagueWhitelist).where(LeagueWhitelist.api_football_id == api_id))
+        row = q.scalar_one_or_none()
+        if row:
+            row.enabled = False
+        else:
+            session.add(LeagueWhitelist(api_football_id=api_id, league_name=f"League {api_id}", country="Unknown", enabled=False))
+        # mark any pending reports as notified
+        await session.commit()
+
+    await cb.answer(f"League {api_id} blacklisted (disabled).", show_alert=True)
+    await cb.message.answer(f"League {api_id} has been blacklisted and will not be selected anymore.")
+
+
+async def _handle_blacklist_report(cb: CallbackQuery, data: str):
+    """Handle admin clicking blacklist from a report notification (by report id)"""
+    try:
+        report_id = int(data.split(":",1)[1])
+    except Exception:
+        await cb.answer("Invalid report id.", show_alert=True)
+        return
+
+    from bot.core.database import LeagueReport as LR
+    async with async_session() as session:
+        report = (await session.execute(select(LR).where(LR.id == report_id))).scalar_one_or_none()
+        if not report:
+            await cb.answer("Report not found.", show_alert=True)
+            return
+        league_name = report.league_name
+        # Disable or add whitelist entry
+        q = await session.execute(select(LeagueWhitelist).where(LeagueWhitelist.league_name == league_name))
+        row = q.scalar_one_or_none()
+        if row:
+            row.enabled = False
+        else:
+            session.add(LeagueWhitelist(api_football_id=None, league_name=league_name, country="Unknown", enabled=False))
+        report.notified_admin = True
+        await session.commit()
+
+    await cb.answer(f"League '{league_name}' has been blacklisted.", show_alert=True)
+    await cb.message.answer(f"League '{league_name}' has been blacklisted and will not be selected anymore.")
+
 async def _handle_clear_db(cb: CallbackQuery):
     """Clear all matches"""
     from bot.core.database import async_session, Match
@@ -267,7 +414,7 @@ async def _handle_view_jobs(cb: CallbackQuery):
 
 @admin_router.message(F.text)
 async def handle_text_replies(message: types.Message):
-    """Handle text replies for channel and match input"""
+    """Handle text replies for channel, match input, and vip price"""
     if not is_admin(message.from_user.username):
         return
 
@@ -277,6 +424,40 @@ async def handle_text_replies(message: types.Message):
         await _handle_channel_input(message)
     elif pending == "match":
         await _handle_match_input(message)
+    elif pending == "vip_price":
+        await _handle_vip_price_input(message)
+
+
+async def _handle_vip_price_input(message: types.Message):
+    """Parse VIP price input and save to DB"""
+    try:
+        text = message.text.strip()
+        price = float(text)
+        from bot.core.database import async_session, VIPPricing, PriceHistory
+        from sqlalchemy import select
+
+        async with async_session() as session:
+            # Find active default pricing if exists, else create
+            q = await session.execute(select(VIPPricing).where(VIPPricing.name == 'default'))
+            row = q.scalar_one_or_none()
+            if row:
+                old = row.base_price
+                row.base_price = price
+                row.effective_from = None
+                row.effective_to = None
+            else:
+                session.add(VIPPricing(name='default', base_price=price))
+                old = None
+            await session.commit()
+
+            # Append history
+            session.add(PriceHistory(pricing_id=row.id if row else None, old_price=old, new_price=price, change_reason='admin_set', changed_by=message.from_user.username))
+            await session.commit()
+
+        await message.answer(f"✅ VIP base price set to {price}")
+    except Exception as e:
+        logger.error(f"[ADMIN] VIP price set failed: {e}")
+        await message.answer(f"❌ Could not set VIP price. Please send a numeric value (e.g. 100)")
 
 
 async def _handle_channel_input(message: types.Message):

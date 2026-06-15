@@ -15,6 +15,9 @@ from aiogram import Bot
 from aiogram.types import FSInputFile
 
 from bot.core.config import CHANNEL_ID, ADMIN_USERNAME
+from bot.core.database import async_session, Admin
+from sqlalchemy import select
+
 from bot.services.caption_engine import get_caption
 from bot.services.image_generator import ImageGenerator
 from bot.services.ui_utils import UIUtils
@@ -72,7 +75,7 @@ async def _send_photo(bot: Bot, image_path: str, caption: str) -> int | None:
 # ── Payload builder ──────────────────────────────────────────────────────────
 
 def _build_match_data(match, is_win: bool = None, hide_odds: bool = False,
-                      is_finished: bool = False) -> dict:
+                      is_finished: bool = False, admin_user: str | None = None) -> dict:
     """Builds the BOT_DATA payload injected into the React UI."""
     odds_map = json.loads(match.odds_data) if match.odds_data else {}
 
@@ -103,7 +106,7 @@ def _build_match_data(match, is_win: bool = None, hide_odds: bool = False,
         "payout":           payout,
         "balance":          float(ui.get_fluctuating_balance().replace(",", "")),
         "cashout":          float(ui.get_fluctuating_cashout().replace(",", "")),
-        "adminUser":        ADMIN_USERNAME,
+        "adminUser":        admin_user or ADMIN_USERNAME,
         "hideOdds":         hide_odds,
         "isWin":            is_win,
     }
@@ -111,53 +114,70 @@ def _build_match_data(match, is_win: bool = None, hide_odds: bool = False,
 
 # ── Step functions — all return message_id or None ──────────────────────────
 
+async def _get_admin_username() -> str | None:
+    try:
+        async with async_session() as session:
+            q = await session.execute(select(Admin).limit(1))
+            admin = q.scalar_one_or_none()
+            if admin and admin.username:
+                return admin.username.lstrip('@').strip()
+    except Exception:
+        pass
+    return ADMIN_USERNAME
+
+
 async def post_step1_preview(bot: Bot, match) -> int | None:
     logger.info(f"[STEP 1] Generating preview card for match {match.id}")
-    data = _build_match_data(match)
+    admin_user = await _get_admin_username()
+    data = _build_match_data(match, admin_user=admin_user)
     img_path = await image_gen.generate_image(
         "preview-before", data, f"match_{match.id}_step1_preview.png"
     )
-    caption = get_caption("preview", ADMIN_USERNAME)
+    caption = await get_caption("preview", admin_user)
     return await _send_photo(bot, img_path, caption)
 
 
 async def post_step2_urgency(bot: Bot, match) -> int | None:
     logger.info(f"[STEP 2] Generating urgency post for match {match.id}")
-    data = _build_match_data(match)
+    admin_user = await _get_admin_username()
+    data = _build_match_data(match, admin_user=admin_user)
     img_path = await image_gen.generate_image(
         "preview-before", data, f"match_{match.id}_step2_urgency.png"
     )
-    caption = get_caption("urgency", ADMIN_USERNAME)
+    caption = await get_caption("urgency", admin_user)
     return await _send_photo(bot, img_path, caption)
 
 
 async def post_step3_black_box(bot: Bot, match) -> int | None:
     logger.info(f"[STEP 3] Generating black-box slip for match {match.id}")
-    data = _build_match_data(match, hide_odds=True)
+    admin_user = await _get_admin_username()
+    data = _build_match_data(match, hide_odds=True, admin_user=admin_user)
     img_path = await image_gen.generate_image(
         "slip-before", data, f"match_{match.id}_step3_blackbox.png"
     )
-    caption = get_caption("black_box", ADMIN_USERNAME)
+    caption = await get_caption("black_box", admin_user)
     return await _send_photo(bot, img_path, caption)
 
 
 async def post_step4_result(bot: Bot, match) -> int | None:
     logger.info(f"[STEP 4] Generating result preview for match {match.id}")
-    data = _build_match_data(match, is_finished=True)
+    admin_user = await _get_admin_username()
+    data = _build_match_data(match, is_finished=True, admin_user=admin_user)
     img_path = await image_gen.generate_image(
         "preview-after", data, f"match_{match.id}_step4_result.png"
     )
-    caption = get_caption("result", ADMIN_USERNAME)
+    caption = await get_caption("result", admin_user)
     return await _send_photo(bot, img_path, caption)
 
 
 async def post_step5_final_slip(bot: Bot, match, is_win: bool) -> int | None:
     logger.info(f"[STEP 5] Generating final slip for match {match.id} — {'WIN' if is_win else 'LOSS'}")
     view = "slip-won" if is_win else "slip-lost"
-    data = _build_match_data(match, is_win=is_win, is_finished=True)
+    admin_user = await _get_admin_username()
+    data = _build_match_data(match, is_win=is_win, is_finished=True, admin_user=admin_user)
     img_path = await image_gen.generate_image(
         view, data, f"match_{match.id}_step5_{'win' if is_win else 'loss'}.png"
     )
     pool = "win" if is_win else "lose"
-    caption = get_caption(pool, ADMIN_USERNAME)
+    caption = await get_caption(pool, admin_user)
     return await _send_photo(bot, img_path, caption)

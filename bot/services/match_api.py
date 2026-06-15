@@ -11,6 +11,8 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 from bot.core.config import API_FOOTBALL_KEY, ODDS_API_KEY
+from bot.core.database import async_session, LeagueWhitelist
+from sqlalchemy import select
 
 # The small leagues we target — IDs for API-Football
 # Saudi First Division=390, Thai League 2=296, Argentine Primera Nacional=132,
@@ -71,9 +73,20 @@ class MatchDataFetcher:
     async def _af_fixtures(self, days_ahead: int) -> List[Dict]:
         results = []
         # Major league IDs to EXCLUDE (we only want small/obscure leagues)
-        # 39: Premier League, 140: La Liga, 135: Serie A, 78: Bundesliga, 61: Ligue 1, 2: UCL, 3: UEL
         MAJOR_LEAGUES = {39, 140, 135, 78, 61, 2, 3, 848, 15}
-        
+
+        # Load DB whitelist (if any enabled entries exist)
+        whitelist_ids = set()
+        try:
+            async with async_session() as session:
+                q = await session.execute(select(LeagueWhitelist).where(LeagueWhitelist.enabled == True))
+                rows = q.scalars().all()
+                whitelist_ids = {int(r.api_football_id) for r in rows if r and r.api_football_id}
+                if whitelist_ids:
+                    logger.info(f"[DB] Using league whitelist with {len(whitelist_ids)} entries.")
+        except Exception as e:
+            logger.warning(f"[DB] Could not load league whitelist: {e}")
+
         async with aiohttp.ClientSession(headers=self.af_headers) as session:
             for day_offset in range(days_ahead):
                 target_date = (datetime.utcnow() + timedelta(days=day_offset)).strftime("%Y-%m-%d")
@@ -86,17 +99,22 @@ class MatchDataFetcher:
                     if resp.status != 200:
                         logger.error(f"API-Football HTTP {resp.status} for date {target_date}")
                         continue
-                        
+
                     data = await resp.json()
                     for f in data.get("response", []):
                         league_id = f.get("league", {}).get("id")
+                        # Always skip major mainstream leagues
                         if league_id in MAJOR_LEAGUES:
-                            continue  # Skip major mainstream leagues
-                            
+                            continue
+
+                        # If whitelist is configured, only accept leagues in the whitelist
+                        if whitelist_ids and (league_id not in whitelist_ids):
+                            continue
+
                         fixture = f.get("fixture", {})
                         teams   = f.get("teams", {})
                         league  = f.get("league", {})
-                        
+
                         results.append({
                             "id":           fixture["id"],
                             "league":       league.get("name", "Unknown League").upper(),
@@ -170,10 +188,10 @@ class MatchDataFetcher:
     # ------------------------------------------------------------------
     @staticmethod
     def _default_odds() -> Dict[str, float]:
-        """Safe fallback odds when all APIs fail."""
+        """Safe fallback odds when all APIs fail - realistic decimal odds."""
         return {
-            "0-0": 8.50, "1-0": 6.50, "0-1": 7.00,
-            "1-1": 5.50, "2-0": 10.00, "0-2": 12.00,
-            "2-1": 9.50, "1-2": 11.00, "2-2": 14.50,
-            "3-0": 21.00, "0-3": 26.00, "3-1": 18.00,
+        "0-0": 8.75, "1-0": 6.25, "0-1": 7.50,
+        "1-1": 5.50, "2-0": 10.20, "0-2": 12.80,
+        "2-1": 9.80, "1-2": 11.50, "2-2": 14.75,
+        "3-0": 21.50, "0-3": 26.50, "3-1": 18.50,
         }

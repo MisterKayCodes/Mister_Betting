@@ -97,26 +97,86 @@ DAY_TEMPLATES = {
 }
 
 
+import asyncio
+from sqlalchemy import select
+from bot.core.database import async_session, VIPPricing, AppConfig
+
+
+DEFAULT_BASE_PRICE = 100.0
+WEEKEND_DISCOUNT_PCT_DEFAULT = 20  # percent
+HOLIDAY_DISCOUNT_PCT_DEFAULT = 30  # percent
+WEEKEND_RANGE_PCT = (18, 25)
+HOLIDAY_RANGE_PCT = (28, 35)
+
+
 def get_holiday_info(today: date = None):
-    """Returns (holiday_name, discount_price) or (None, NORMAL_PRICE)."""
+    """Returns holiday_name or None — price calculation moved to async caption generator."""
     today = today or date.today()
     key = (today.month, today.day)
     if key in HOLIDAY_DISCOUNTS:
-        name, lo, hi = HOLIDAY_DISCOUNTS[key]
-        return name, random.randint(lo, hi)
+        name = HOLIDAY_DISCOUNTS[key][0]
+        return name
     if today.weekday() >= 5:  # Saturday or Sunday
-        return "Weekend", random.randint(*WEEKEND_DISCOUNT)
-    return None, NORMAL_PRICE
+        return "Weekend"
+    return None
 
 
-def get_caption(pool: str, admin: str, today: date = None) -> str:
+async def _fetch_base_price() -> float:
+    """Fetch VIP base price from DB (VIPPricing)."""
+    try:
+        async with async_session() as session:
+            q = await session.execute(select(VIPPricing).where(VIPPricing.name == 'default', VIPPricing.is_active == True))
+            row = q.scalar_one_or_none()
+            if row and getattr(row, 'base_price', None) is not None:
+                return float(row.base_price)
+    except Exception:
+        pass
+    return DEFAULT_BASE_PRICE
+
+
+async def _fetch_discount_pcts() -> tuple:
+    """Fetch discount percentages from AppConfig or use defaults."""
+    weekend_pct = WEEKEND_DISCOUNT_PCT_DEFAULT
+    holiday_pct = HOLIDAY_DISCOUNT_PCT_DEFAULT
+    try:
+        async with async_session() as session:
+            wp = (await session.execute(select(AppConfig).where(AppConfig.key == 'weekend_discount_pct'))).scalar_one_or_none()
+            hp = (await session.execute(select(AppConfig).where(AppConfig.key == 'holiday_discount_pct'))).scalar_one_or_none()
+            if wp and wp.value:
+                weekend_pct = int(wp.value)
+            if hp and hp.value:
+                holiday_pct = int(hp.value)
+    except Exception:
+        pass
+    return weekend_pct, holiday_pct
+
+
+async def get_caption(pool: str, admin: str, today: date = None) -> str:
     """
-    Returns a formatted caption from the chosen pool.
-    Automatically injects holiday/day-sensitive content when applicable.
+    Async caption generator that injects dynamic VIP pricing from DB and discount rules.
     """
     today = today or date.today()
-    holiday_name, price = get_holiday_info(today)
+    holiday_name = get_holiday_info(today)
     admin_tag = f"@{admin}"
+
+    base_price = await _fetch_base_price()
+    weekend_pct, holiday_pct = await _fetch_discount_pcts()
+
+    # choose effective discount % (random within a mouth-watering but safe range)
+    if holiday_name == 'Weekend':
+        chosen_pct = random.randint(*WEEKEND_RANGE_PCT)
+    elif holiday_name:
+        chosen_pct = random.randint(*HOLIDAY_RANGE_PCT)
+    else:
+        chosen_pct = 0
+
+    # allow admin-configured caps to slightly override
+    if holiday_name == 'Weekend' and weekend_pct:
+        chosen_pct = max(chosen_pct, int(weekend_pct))
+    if holiday_name and holiday_pct:
+        chosen_pct = max(chosen_pct, int(holiday_pct))
+
+    discounted_price = round(base_price * (1 - (chosen_pct / 100.0)), 2) if chosen_pct > 0 else round(base_price, 2)
 
     # Special new-month banner appended to certain captions
     new_month_suffix = ""
@@ -129,11 +189,9 @@ def get_caption(pool: str, admin: str, today: date = None) -> str:
     # Holiday override for promotional captions only
     if pool in ("preview", "urgency") and holiday_name:
         if holiday_name == "Weekend":
-            base = random.choice(WEEKEND_CAPTIONS).format(price=price, admin=admin_tag)
+            base = random.choice(WEEKEND_CAPTIONS).format(price=discounted_price, admin=admin_tag)
         else:
-            base = random.choice(HOLIDAY_CAPTIONS).format(
-                holiday=holiday_name, price=price, admin=admin_tag
-            )
+            base = random.choice(HOLIDAY_CAPTIONS).format(holiday=holiday_name, price=discounted_price, admin=admin_tag)
         return base + new_month_suffix
 
     pools = {
@@ -148,4 +206,12 @@ def get_caption(pool: str, admin: str, today: date = None) -> str:
     day_prefix = DAY_TEMPLATES.get(today.weekday(), "")
     base = random.choice(pools[pool]).format(admin=admin_tag)
 
-    return f"{day_prefix}\n\n{base}{new_month_suffix}".strip()
+    # Append a subtle pricing line for promotional richness on preview/urgency
+    if pool in ("preview", "urgency") and chosen_pct > 0:
+        promo_line = f"\n\n🔖 Promo: VIP now ${discounted_price} ({chosen_pct}% off)"
+    elif pool in ("preview", "urgency"):
+        promo_line = f"\n\n💵 VIP: ${round(base_price,2)}"
+    else:
+        promo_line = ""
+
+    return f"{day_prefix}\n\n{base}{promo_line}{new_month_suffix}".strip()

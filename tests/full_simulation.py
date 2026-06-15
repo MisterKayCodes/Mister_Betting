@@ -145,7 +145,7 @@ def test_phase3_winloss():
 # ══════════════════════════════════════════════
 # PHASE 4: Caption Engine (Holidays, Weekends, Rotation)
 # ══════════════════════════════════════════════
-def test_phase4_captions():
+async def test_phase4_captions():
     print("\n" + "=" * 60)
     print("PHASE 4: Caption Engine (Holidays, Weekends, Days)")
     print("=" * 60)
@@ -156,28 +156,26 @@ def test_phase4_captions():
     # Test all 6 caption pools generate without crashing
     pools = ["preview", "urgency", "black_box", "result", "win", "lose"]
     for pool in pools:
-        caption = get_caption(pool, "opozdal96")
+        caption = await get_caption(pool, "opozdal96")
         test(f"Caption pool '{pool}' generates text", len(caption) > 20)
     
-    # Test holiday detection
+    # Test holiday detection (name only)
     christmas = date(2026, 12, 25)
-    name, price = get_holiday_info(christmas)
+    name = get_holiday_info(christmas)
     test("Christmas detected as holiday",   name == "Christmas")
-    test("Christmas discount is $50-70",    50 <= price <= 70)
     
     # Test weekend detection
     saturday = date(2026, 6, 13)  # Saturday
-    name, price = get_holiday_info(saturday)
+    name = get_holiday_info(saturday)
     test("Saturday detected as Weekend",    name == "Weekend")
-    test("Weekend discount is $80-90",      80 <= price <= 90)
     
     # Test new month banner
     new_month = date(2026, 7, 1)
-    caption = get_caption("preview", "opozdal96", today=new_month)
+    caption = await get_caption("preview", "opozdal96", today=new_month)
     test("New month banner appended on 1st", "July" in caption or "New month" in caption)
     
     # Test captions contain admin tag
-    caption = get_caption("preview", "opozdal96")
+    caption = await get_caption("preview", "opozdal96")
     test("Caption includes @opozdal96",     "@opozdal96" in caption)
 
 
@@ -459,7 +457,7 @@ async def main():
     test_phase3_winloss()
     
     # Phase 4: Captions
-    test_phase4_captions()
+    await test_phase4_captions()
     
     # Phase 5: UI Utils
     test_phase5_ui_utils()

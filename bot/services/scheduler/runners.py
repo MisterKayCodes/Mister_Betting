@@ -171,6 +171,61 @@ class TaskRunners:
             is_win=is_win,           # extra kwarg forwarded to poster
         )
 
+    async def _auto_blacklist_check(self, league_name: str, report_id: int):
+        """Check whether admin responded to a league report; if not, auto-blacklist and compensate VIPs."""
+        from bot.core.database import async_session, LeagueWhitelist, LeagueReport, VIPCompensation, Match, AppConfig
+        from sqlalchemy import select, update
+        from datetime import datetime
+
+        async with async_session() as session:
+            report = (await session.execute(select(LeagueReport).where(LeagueReport.id == report_id))).scalar_one_or_none()
+            if not report:
+            logger.info(f"[AUTO-BLACKLIST] No report found id={report_id}, skipping.")
+            return
+            if report.notified_admin:
+            logger.info(f"[AUTO-BLACKLIST] Report {report_id} already handled by admin.")
+            return
+
+            # Proceed to auto-blacklist the league
+            q = await session.execute(select(LeagueWhitelist).where(LeagueWhitelist.league_name == league_name))
+            lw = q.scalar_one_or_none()
+            if lw:
+            lw.enabled = False
+            else:
+            # Try to match by partial name (case-insensitive)
+            q2 = await session.execute(select(LeagueWhitelist).where(LeagueWhitelist.league_name.ilike(f"%{league_name}%")))
+            lw2 = q2.scalar_one_or_none()
+            if lw2:
+                lw2.enabled = False
+            else:
+                session.add(LeagueWhitelist(api_football_id=None, league_name=league_name, country="Unknown", enabled=False))
+
+            # Update any upcoming matches in this league to mark auto_blacklisted
+            now = datetime.utcnow()
+            await session.execute(update(Match).where(Match.league_name == league_name, Match.kickoff_time > now).values(auto_blacklisted=True))
+
+            # Record VIP compensation (+1 game)
+            comp = VIPCompensation(reason=f"Auto-blacklist for {league_name}", games_awarded=1)
+            session.add(comp)
+
+            # Mark report as notified/handled
+            report.notified_admin = True
+            await session.commit()
+
+        # Send channel message informing users
+        try:
+            # Get channel id
+            async with async_session() as session:
+            row = (await session.execute(select(AppConfig).where(AppConfig.key == 'channel_id'))).scalar_one_or_none()
+            channel = row.value if row else None
+            if channel:
+            text = (f"⚠️ <b>Match Cancelled / Suspended</b>\n\n"
+                    f"The league <b>{league_name}</b> has been auto-blacklisted due to repeated missing results. "
+                    "VIP subscribers have been awarded +1 free game as compensation.")
+            await self.bot.send_message(chat_id=channel, text=text, parse_mode='HTML')
+        except Exception as e:
+            logger.error(f"[AUTO-BLACKLIST] Failed to announce to channel: {e}")
+
     async def run_step4(self, match_id: int):
         """Step 4 fires second — fetches real score and posts result summary."""
         from bot.services.match_api import MatchDataFetcher
@@ -183,25 +238,86 @@ class TaskRunners:
 
         if result and result.get("status") == "FT":
             await self._update_match(
-                match_id,
-                is_finished=True,
-                real_home_score=result["home_score"],
-                real_away_score=result["away_score"],
+            match_id,
+            is_finished=True,
+            real_home_score=result["home_score"],
+            real_away_score=result["away_score"],
             )
             await self._post_and_verify(
-                step_num=4,
-                match_id=match_id,
-                post_fn=poster.post_step4_result,
-                posted_flag="result_preview_posted",
-                msg_id_field="step4_message_id",
-                retry_field="step4_retries",
-                retry_fn=self.run_step4,
+            step_num=4,
+            match_id=match_id,
+            post_fn=poster.post_step4_result,
+            posted_flag="result_preview_posted",
+            msg_id_field="step4_message_id",
+            retry_field="step4_retries",
+            retry_fn=self.run_step4,
             )
         else:
+            from bot.core.database import async_session, LeagueReport
+            import urllib.parse
+
             logger.warning(
-                f"[STEP 4] Match {match_id} score not ready yet. "
-                "Rescheduling retry in 15 min."
+            f"[STEP 4] Match {match_id} score not ready yet. "
+            "Rescheduling retry in 15 min."
             )
+
+            # Increment per-match result fetch retry counter and record attempt time
+            retries = getattr(match, 'result_fetch_retries', 0) or 0
+            await self._update_match(match_id, result_fetch_retries=retries + 1, last_result_fetch_attempt=datetime.utcnow())
+
+            # If exceeded retry threshold, log a league report and notify admin with quick blacklist action
+            if retries + 1 >= 5:
+            league_name = getattr(match, 'league_name', 'Unknown League')
+            fixture_id = match.id
+            async with async_session() as session:
+                report = LeagueReport(fixture_id=fixture_id, api_football_league_id=None, league_name=league_name, report_reason='missing_full_time_score')
+                session.add(report)
+                await session.commit()
+                report_id = report.id
+
+            # Notify admin via direct message with a blacklist button
+            try:
+                from bot.core.database import async_session, AppConfig
+                from sqlalchemy import select
+                from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+                async with async_session() as session:
+                    row = (await session.execute(select(AppConfig).where(AppConfig.key == 'admin_chat_id'))).scalar_one_or_none()
+                    if row:
+                        admin_chat = int(row.value)
+                        kb = InlineKeyboardMarkup(inline_keyboard=[
+                            [InlineKeyboardButton(text='🚫 Blacklist League', callback_data=f"adm_blacklist_report:{report_id}"),
+                             InlineKeyboardButton(text='Ignore', callback_data='adm_view_jobs')]
+                        ])
+                        await self.bot.send_message(admin_chat, f"⚠️ League {league_name} has failed to provide final scores for fixture {fixture_id} after 5 attempts. You can blacklist this league to prevent future picks.", reply_markup=kb, parse_mode='HTML')  # callback uses report_id for safety
+
+            except Exception as e:
+                logger.error(f"[STEP 4] Failed to notify admin about missing score: {e}")
+
+            # Schedule auto-blacklist check at next match kickoff - 9 hours
+            try:
+                async with async_session() as session:
+                    now = datetime.utcnow()
+                    q = await session.execute(select(Match).where(Match.league_name == league_name, Match.kickoff_time > now).order_by(Match.kickoff_time.asc()))
+                    next_match = q.scalar_one_or_none()
+                    if next_match:
+                        check_at = next_match.kickoff_time - timedelta(hours=9)
+                        if check_at <= datetime.utcnow():
+                            # Time already passed — run immediate auto-check
+                            await self._auto_blacklist_check(league_name, report_id)
+                        else:
+                            self.scheduler.add_job(
+                                self._auto_blacklist_check, 'date', run_date=check_at,
+                                args=[league_name, report_id], id=f"auto_blacklist_{league_name}_{report_id}", replace_existing=True
+                            )
+            except Exception as e:
+                logger.error(f"[STEP 4] Failed to schedule auto-blacklist check: {e}")
+
+            # Also reschedule no further retries for this match's result — it will be handled manually
+            logger.critical(f"[STEP 4] Match {match_id} exceeded result fetch retries — report created for {league_name}.")
+            return
+
+            # Otherwise schedule another retry in 15 minutes
             self.scheduler.add_job(
                 self.run_step4, "date",
                 run_date=datetime.utcnow() + timedelta(minutes=15),
