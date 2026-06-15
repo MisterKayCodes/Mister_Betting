@@ -33,14 +33,16 @@ BLACK_BOX_CAPTIONS = [
     "⚽ Bet slip confirmed. Correct Score market. The number is covered for a reason. DM {admin} for access.",
 ]
 
+# ── FIXED: NEUTRAL result captions (no implied WIN) ──────────────────────────
 RESULT_CAPTIONS = [
-    "🎯 FULL TIME! I told you. The score dropped exactly as our source said. VIPs — time to celebrate! 🥂",
-    "✅ FT. Read it and weep. Another perfect read on the match. Bookies don't like us for a reason.",
-    "📢 FINAL WHISTLE. The result is in. Our analyst called it to the exact number. Were you in?",
-    "🔔 GAME OVER. Score confirmed. Our VIPs are already counting profit. Next game drops soon. DM {admin}.",
-    "🏆 That's FULL TIME. Correct Score hit. If you were in VIP, your ticket just turned green. 💚",
+    "📊 FULL TIME! The match has ended. Final score is in. VIP results coming shortly. DM {admin}.",
+    "⏱️ FT WHISTLE. The game is complete. Check back soon for the VIP verdict. DM {admin}.",
+    "📢 FINAL SCORE CONFIRMED. Our analysis team is reviewing. Final slip drops in a few minutes. DM {admin}.",
+    "🔔 MATCH FINISHED. Score is locked. VIPs - your ticket outcome is being processed. DM {admin}.",
+    "🏁 GAME OVER. The final score is official. Stay tuned for the VIP result. DM {admin}.",
 ]
 
+# ── ENHANCED: WIN captions with day awareness ────────────────────────────────
 WIN_CAPTIONS = [
     "✅ TICKET CASHED! Correct Score hit exactly as predicted! VIP members — enjoy the profit! 💸 Next game coming. DM {admin}.",
     "🎯 BOOM. Exactly as called. We don't guess, we KNOW. Cashout confirmed. DM {admin} for tomorrow's game.",
@@ -49,6 +51,7 @@ WIN_CAPTIONS = [
     "🏆 WON. Again. Like clockwork. Our VIPs never miss. DM {admin} to get tomorrow's fixed score.",
 ]
 
+# ── ENHANCED: LOSE captions with day awareness ───────────────────────────────
 LOSE_CAPTIONS = [
     "❌ Rare miss today. The referee had other plans. 😤 ALL VIP members receive +1 FREE DAY compensation. We bounce back HARDER tomorrow. DM {admin}.",
     "⚠️ Not our day — but this is football. VIPs: your subscription has been extended by 1 day automatically. Tomorrow's game is a LOCK. DM {admin}.",
@@ -60,11 +63,10 @@ LOSE_CAPTIONS = [
 # ---------------------------------------------------------------------------
 
 HOLIDAY_DISCOUNTS = {
-    # (month, day): (name, min_price, max_price)
     (12, 25): ("Christmas", 50, 70),
     (12, 31): ("New Year's Eve", 55, 70),
     (1, 1):   ("New Year's Day", 50, 70),
-    (4, 1):   ("Easter", 55, 70),   # approximate — can be made dynamic
+    (4, 1):   ("Easter", 55, 70),
 }
 
 WEEKEND_DISCOUNT = (80, 90)
@@ -86,14 +88,37 @@ NEW_MONTH_CAPTIONS = [
     "🔄 Fresh month, fresh games. Let's make {month} profitable together. DM {admin}.",
 ]
 
+# ── ENHANCED: Day templates with more variety ────────────────────────────────
 DAY_TEMPLATES = {
-    0: "💼 Monday grind? Let us handle the money for you.",   # Monday
-    1: "📊 Tuesday game on. VIP locked in.",
-    2: "⚡ Midweek madness. Big odds tonight.",
-    3: "🎯 Thursday — our analyst has been watching this one all week.",
-    4: "🔥 Friday feeling + fixed score = perfect weekend start.",
-    5: "🏟️ Saturday is for winners. Are you in?",
-    6: "☀️ Sunday special. Big game. Big odds. DM {admin}.",
+    0: "💼 Monday grind? Let us handle the money for you.",           # Monday
+    1: "📊 Tuesday game on. VIP locked in.",                          # Tuesday
+    2: "⚡ Midweek madness. Big odds tonight.",                       # Wednesday
+    3: "🎯 Thursday — our analyst has been watching this one all week.", # Thursday
+    4: "🔥 Friday feeling + fixed score = perfect weekend start.",    # Friday
+    5: "🏟️ Saturday is for winners. Are you in?",                    # Saturday
+    6: "☀️ Sunday special. Big game. Big odds. DM {admin}.",         # Sunday
+}
+
+# ── NEW: WIN day-specific additions ──────────────────────────────────────────
+WIN_DAY_SUFFIX = {
+    0: " What a way to start the week! 💪",
+    1: " Tuesday winners are the best winners!",
+    2: " Midweek money! Love to see it.",
+    3: " Thursday = payday for VIPs!",
+    4: " Friday feeling just got better! 🍾",
+    5: " Weekend winner! Enjoy your profits! 🍻",
+    6: " Sunday funday with a win! 🙏",
+}
+
+# ── NEW: LOSE day-specific additions ─────────────────────────────────────────
+LOSE_DAY_SUFFIX = {
+    0: " Monday blues, but we bounce back tomorrow.",
+    1: " Tuesday setback. Tomorrow is a new day.",
+    2: " Midweek bump. We'll get them next time.",
+    3: " Thursday loss. Watch us roar back tomorrow.",
+    4: " Friday disappointment. Weekend redemption incoming!",
+    5: " Saturday slip. Sunday smash incoming! 💥",
+    6: " Sunday sorrow. Monday motivation locked in!",
 }
 
 
@@ -103,8 +128,8 @@ from bot.core.database import async_session, VIPPricing, AppConfig
 
 
 DEFAULT_BASE_PRICE = 100.0
-WEEKEND_DISCOUNT_PCT_DEFAULT = 20  # percent
-HOLIDAY_DISCOUNT_PCT_DEFAULT = 30  # percent
+WEEKEND_DISCOUNT_PCT_DEFAULT = 20
+HOLIDAY_DISCOUNT_PCT_DEFAULT = 30
 WEEKEND_RANGE_PCT = (18, 25)
 HOLIDAY_RANGE_PCT = (28, 35)
 
@@ -156,13 +181,14 @@ async def get_caption(pool: str, admin: str, today: date = None) -> str:
     Async caption generator that injects dynamic VIP pricing from DB and discount rules.
     """
     today = today or date.today()
+    weekday = today.weekday()
     holiday_name = get_holiday_info(today)
     admin_tag = f"@{admin}"
 
     base_price = await _fetch_base_price()
     weekend_pct, holiday_pct = await _fetch_discount_pcts()
 
-    # choose effective discount % (random within a mouth-watering but safe range)
+    # choose effective discount %
     if holiday_name == 'Weekend':
         chosen_pct = random.randint(*WEEKEND_RANGE_PCT)
     elif holiday_name:
@@ -178,7 +204,7 @@ async def get_caption(pool: str, admin: str, today: date = None) -> str:
 
     discounted_price = round(base_price * (1 - (chosen_pct / 100.0)), 2) if chosen_pct > 0 else round(base_price, 2)
 
-    # Special new-month banner appended to certain captions
+    # Special new-month banner
     new_month_suffix = ""
     if today.day == 1:
         month_name = today.strftime("%B")
@@ -203,10 +229,17 @@ async def get_caption(pool: str, admin: str, today: date = None) -> str:
         "lose":       LOSE_CAPTIONS,
     }
 
-    day_prefix = DAY_TEMPLATES.get(today.weekday(), "")
+    day_prefix = DAY_TEMPLATES.get(weekday, "")
     base = random.choice(pools[pool]).format(admin=admin_tag)
 
-    # Append a subtle pricing line for promotional richness on preview/urgency
+    # ── NEW: Add day-specific suffix for WIN/LOSE ──────────────────────────────
+    day_suffix = ""
+    if pool == "win" and weekday in WIN_DAY_SUFFIX:
+        day_suffix = WIN_DAY_SUFFIX[weekday]
+    elif pool == "lose" and weekday in LOSE_DAY_SUFFIX:
+        day_suffix = LOSE_DAY_SUFFIX[weekday]
+
+    # Append pricing line for promotional richness
     if pool in ("preview", "urgency") and chosen_pct > 0:
         promo_line = f"\n\n🔖 Promo: VIP now ${discounted_price} ({chosen_pct}% off)"
     elif pool in ("preview", "urgency"):
@@ -214,4 +247,10 @@ async def get_caption(pool: str, admin: str, today: date = None) -> str:
     else:
         promo_line = ""
 
-    return f"{day_prefix}\n\n{base}{promo_line}{new_month_suffix}".strip()
+    # Combine everything
+    result = f"{day_prefix}\n\n{base}{day_suffix}{promo_line}{new_month_suffix}".strip()
+    
+    # Clean up double spaces
+    result = result.replace("  ", " ")
+    
+    return result
