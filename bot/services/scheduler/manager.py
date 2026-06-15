@@ -1,5 +1,6 @@
 # bot/services/scheduler/manager.py
 import random
+import asyncio
 from datetime import datetime, timedelta
 from loguru import logger
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -57,6 +58,23 @@ class TimelineScheduler:
             id="image_cleaner", replace_existing=True
         )
         logger.info("[SCHEDULER] Daily scan, 48h sync, health report, and image cleaner jobs registered.")
+        
+        # ── NEW: Check if DB is empty on startup ──────────────────────────────
+        asyncio.create_task(self._check_and_sync_if_empty())
+
+    async def _check_and_sync_if_empty(self):
+        """
+        Check if database has any matches on startup.
+        If completely empty, trigger immediate auto-sync.
+        """
+        await asyncio.sleep(5)  # Wait for bot to fully initialize
+        unposted_count = await self._count_unposted_matches()
+        
+        if unposted_count == 0:
+            logger.warning("[SCHEDULER] ⚠️ Database is EMPTY on startup! Triggering immediate sync...")
+            await self._auto_cache_sync()
+        else:
+            logger.info(f"[SCHEDULER] ✅ Database has {unposted_count} matches on startup. No sync needed.")
 
     async def _daily_match_scan(self):
         logger.info("[SCHEDULER] Running daily match scan...")
