@@ -55,4 +55,52 @@ class WinLossEngine:
         logger.debug(f"[WinLossEngine] Natural roll: {'WIN' if choice else 'LOSS'}")
         return choice
 
+
+# ── Helper function for picking losing scores ──────────────────────────────
+# This MUST be OUTSIDE the class so runners.py can import it
+def pick_losing_score(real_home: int, real_away: int, odds_data_json: str) -> tuple:
+    """
+    Picks a DIFFERENT score for LOSS days.
+    
+    Example: Real score is 1-2, this picks something else like:
+    - 0-1 (if available in odds)
+    - 1-1 (if available)
+    - Or flips one goal (2-2, 1-3, etc.)
+    
+    Returns: (home_score, away_score)
+    """
+    import json
+    import random
+    
+    # Parse odds data
+    try:
+        odds_map = json.loads(odds_data_json) if odds_data_json else {}
+    except:
+        odds_map = {}
+    
+    # Get all possible scores from odds
+    available_scores = []
+    for score_str in odds_map.keys():
+        try:
+            h, a = map(int, score_str.split("-"))
+            available_scores.append((h, a))
+        except:
+            continue
+    
+    # Filter out the REAL score
+    losing_scores = [(h, a) for (h, a) in available_scores if (h, a) != (real_home, real_away)]
+    
+    if losing_scores:
+        # Pick a random losing score from available odds
+        return random.choice(losing_scores)
+    
+    # Fallback: If no odds available, modify the real score slightly
+    if real_home > 0:
+        return (real_home - 1, real_away)
+    elif real_away > 0:
+        return (real_home, real_away - 1)
+    else:
+        return (1, 0)  # If 0-0, claim 1-0
+
+
 engine = WinLossEngine()

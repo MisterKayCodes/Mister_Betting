@@ -13,6 +13,23 @@ class TimelineScheduler:
         # Initialize our runner engine worker
         self.runners = TaskRunners(self.bot, self.scheduler)
 
+    async def _count_unposted_matches(self) -> int:
+        """
+        Count how many matches are still waiting to be posted.
+        Returns: number of matches where is_finished = False
+        """
+        from bot.core.database import async_session, Match
+        from sqlalchemy import select, func
+        
+        async with async_session() as session:
+            result = await session.execute(
+                select(func.count()).select_from(Match)
+                .where(Match.is_finished == False)
+            )
+            count = result.scalar() or 0
+            logger.debug(f"[MATCH COUNT] {count} unposted matches in database")
+            return count
+
     def start(self):
         self.scheduler.start()
         logger.info("[SCHEDULER] APScheduler engine started successfully.")
@@ -124,13 +141,85 @@ class TimelineScheduler:
     # Background Sync & Maintenance Routines
     # ------------------------------------------------------------------
     async def _auto_cache_sync(self):
-        """Automatically sync upcoming match schedules safely."""
+        """
+        Automatically sync upcoming match schedules safely.
+        
+        RULE: Only sync if there are NO unposted matches waiting.
+        If matches exist, skip to avoid flooding the schedule.
+        """
         logger.info("[SCHEDULER] Executing automated 48-hour match cache synchronization cycle...")
+        
+        # ── STEP 4: Check how many matches are waiting ──────────────────────────
+        unposted_count = await self._count_unposted_matches()
+        
+        if unposted_count > 0:
+            logger.info(f"[SCHEDULER] SKIPPING auto-sync. {unposted_count} unposted matches already in database.")
+            logger.info(f"[SCHEDULER] Admin must use manual sync (/admin) when ready to add more.")
+            return  # ← STOP HERE, don't sync
+        
+        # ── No matches waiting - proceed with sync ──────────────────────────────
+        logger.info("[SCHEDULER] No pending matches. Proceeding with auto-sync...")
+        
         from bot.services.match_api import MatchDataFetcher
+        from bot.core.database import async_session, Match, AppConfig
+        from sqlalchemy import select
+        from collections import defaultdict
+        import json
+        
         try:
             fetcher = MatchDataFetcher()
-            await fetcher.fetch_upcoming_matches(days_ahead=3)
-            logger.success("[SCHEDULER] Automated cache sync successfully updated match data.")
+            matches = await fetcher.fetch_upcoming_matches(days_ahead=3)
+            
+            # Group matches by day
+            matches_by_day = defaultdict(list)
+            for m in matches:
+                day_str = m["kickoff_time"].strftime("%Y-%m-%d")
+                matches_by_day[day_str].append(m)
+            
+            # Pick 1 match per day (same logic as manual sync)
+            selected_matches = []
+            for day_str, daily_matches in matches_by_day.items():
+                if daily_matches:
+                    selected_matches.append(random.choice(daily_matches))
+            
+            # Add to database
+            added = 0
+            async with async_session() as session:
+                for m in selected_matches:
+                    # Check if match already exists
+                    exists = await session.execute(
+                        select(Match).where(Match.id == m["id"])
+                    )
+                    if not exists.scalar_one_or_none():
+                        odds = await fetcher.fetch_correct_score_odds(m["id"])
+                        session.add(Match(
+                            id=m["id"],
+                            home_team=m["home_team"],
+                            away_team=m["away_team"],
+                            league_name=m["league"],
+                            kickoff_time=m["kickoff_time"],
+                            odds_data=json.dumps(odds),
+                        ))
+                        added += 1
+                await session.commit()
+            
+            # Save last sync time
+            async with async_session() as session:
+                existing = await session.execute(
+                    select(AppConfig).where(AppConfig.key == "last_sync_time")
+                )
+                row = existing.scalar_one_or_none()
+                if row:
+                    row.value = str(datetime.utcnow().timestamp())
+                else:
+                    session.add(AppConfig(key="last_sync_time", value=str(datetime.utcnow().timestamp())))
+                await session.commit()
+            
+            # Trigger daily scan to schedule them
+            await self._daily_match_scan()
+            
+            logger.success(f"[SCHEDULER] Auto-sync complete. Added {added} matches.")
+            
         except Exception as e:
             logger.error(f"[SCHEDULER] Automated match sync encountered an error: {e}")
 
@@ -190,4 +279,3 @@ class TimelineScheduler:
             f"[CLEANER] 🧹 Image cleanup done — {deleted} file(s) deleted, "
             f"{errors} error(s). Images newer than 7 days are untouched."
         )
-

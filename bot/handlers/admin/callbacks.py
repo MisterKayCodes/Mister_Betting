@@ -1,10 +1,10 @@
-
 """
 callbacks.py — All admin callback and text handlers
 """
 import json
 import asyncio
 import random
+from datetime import datetime
 from collections import defaultdict
 
 from aiogram import F, types
@@ -37,6 +37,10 @@ async def admin_callbacks(cb: CallbackQuery):
         await _handle_add_match(cb)
     elif data == "adm_sync_now":
         await _handle_sync_matches(cb)
+    elif data == "adm_sync_approve":
+        await _handle_sync_approve(cb)
+    elif data == "adm_sync_cancel":
+        await _handle_sync_cancel(cb)
     elif data == "adm_clear_db":
         await _handle_clear_db(cb)
     elif data == "adm_view_jobs":
@@ -125,12 +129,67 @@ async def _handle_add_match(cb: CallbackQuery):
 
 
 async def _handle_sync_matches(cb: CallbackQuery):
-    """Sync matches from API"""
-    await cb.answer("Syncing exactly 3 matches from API...", show_alert=False)
+    """Sync matches from API - FIRST checks if admin approval is needed"""
+    
+    # STEP 5: Check how many unposted matches exist
+    from bot.core.database import Match
+    from sqlalchemy import select, func
+    
+    async with async_session() as session:
+        result = await session.execute(
+            select(func.count()).select_from(Match)
+            .where(Match.is_finished == False)
+        )
+        unposted_count = result.scalar() or 0
+    
+    # If matches exist, ASK for approval
+    if unposted_count > 0:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ YES, Add More", callback_data="adm_sync_approve"),
+             InlineKeyboardButton(text="❌ NO, Cancel", callback_data="adm_sync_cancel")]
+        ])
+        await cb.message.answer(
+            f"⚠️ <b>You already have {unposted_count} unposted matches in the database.</b>\n\n"
+            f"Do you want to add MORE matches?\n\n"
+            f"⚠️ Adding more may overload the schedule.",
+            reply_markup=kb,
+            parse_mode="HTML"
+        )
+        await cb.answer()
+        return  # WAIT for admin to click button
+    
+    # No matches - sync immediately
+    await _perform_sync(cb)
+
+
+async def _handle_sync_approve(cb: CallbackQuery):
+    """Admin approved adding more matches"""
+    if not is_admin(cb.from_user.username):
+        await cb.answer("Access Denied.", show_alert=True)
+        return
+    
+    await cb.message.edit_text("✅ Proceeding with sync...")
+    await _perform_sync(cb)
+
+
+async def _handle_sync_cancel(cb: CallbackQuery):
+    """Admin rejected adding more matches"""
+    if not is_admin(cb.from_user.username):
+        await cb.answer("Access Denied.", show_alert=True)
+        return
+    
+    await cb.message.edit_text("❌ Sync cancelled. No matches were added.")
+    await cb.answer()
+
+
+async def _perform_sync(cb: CallbackQuery):
+    """Actually perform the sync (called after approval or when DB empty)"""
+    await cb.answer("Syncing matches from API...", show_alert=False)
     
     from bot.services.match_api import MatchDataFetcher
-    from bot.core.database import async_session, Match
+    from bot.core.database import async_session, Match, AppConfig
     from sqlalchemy import select
+    from collections import defaultdict
     
     try:
         fetcher = MatchDataFetcher()
@@ -171,6 +230,20 @@ async def _handle_sync_matches(cb: CallbackQuery):
         await temp_scheduler._daily_match_scan()
         
         await cb.message.answer(f"✅ Sync complete. Added {added} fresh matches to DB and scheduled them!")
+        
+        # Save last sync time
+        async with async_session() as session:
+            existing = await session.execute(
+                select(AppConfig).where(AppConfig.key == "last_sync_time")
+            )
+            row = existing.scalar_one_or_none()
+            if row:
+                row.value = str(datetime.utcnow().timestamp())
+            else:
+                session.add(AppConfig(key="last_sync_time", value=str(datetime.utcnow().timestamp())))
+            await session.commit()
+            logger.info(f"[SYNC] Saved last_sync_time = {datetime.utcnow().timestamp()}")
+            
     except Exception as e:
         logger.error(f"[SYNC] Failed: {e}")
         await cb.message.answer(f"❌ Sync failed: {e}")

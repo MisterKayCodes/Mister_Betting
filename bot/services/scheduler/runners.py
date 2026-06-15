@@ -147,18 +147,54 @@ class TaskRunners:
         )
 
     async def run_step5(self, match_id: int):
-        """Step 5 fires first post-match — determines WIN or LOSS."""
+        """
+        Step 5 — Final slip posting.
+        Determines WIN/LOSS and sets claimed scores.
+        """
         from bot.core.database import async_session
+        from bot.services.win_loss_engine import pick_losing_score
+        
         match = await self._load_match(match_id)
         if not match:
             logger.error(f"[STEP 5] Match {match_id} not found in DB.")
             return
 
+        # ── SAFETY CHECK: Don't post without real score ─────────────────────
+        if not match.is_finished or match.real_home_score is None:
+            logger.error(f"[STEP 5] Match {match_id} has no real score. Cannot post final slip. Skipping.")
+            # Mark as finished to prevent infinite retries
+            await self._update_match(
+                match_id,
+                is_finished=True,
+                skip_reason="no_score_available_for_final_slip"
+            )
+            return
+
         async with async_session() as session:
             is_win = await engine.determine_next_outcome(session)
 
-        # Pre-save the outcome so the image builder has the score
-        await self._update_match(match_id, is_win=is_win)
+        # ── Set claimed scores based on outcome ─────────────────────────────
+        if is_win:
+            # WIN: Claim the exact real score
+            claimed_home = match.real_home_score
+            claimed_away = match.real_away_score
+            logger.info(f"[STEP 5] WIN: Claiming exact score {claimed_home}-{claimed_away}")
+        else:
+            # LOSS: Pick a different fake score
+            claimed_home, claimed_away = pick_losing_score(
+                match.real_home_score,
+                match.real_away_score,
+                match.odds_data
+            )
+            logger.info(f"[STEP 5] LOSS: Fake claiming {claimed_home}-{claimed_away} (real was {match.real_home_score}-{match.real_away_score})")
+
+        # Save outcome AND claimed scores
+        await self._update_match(
+            match_id,
+            is_win=is_win,
+            claimed_home_score=claimed_home,
+            claimed_away_score=claimed_away
+        )
 
         await self._post_and_verify(
             step_num=5,
@@ -168,7 +204,7 @@ class TaskRunners:
             msg_id_field="step5_message_id",
             retry_field="step5_retries",
             retry_fn=self.run_step5,
-            is_win=is_win,           # extra kwarg forwarded to poster
+            is_win=is_win,
         )
 
     async def _auto_blacklist_check(self, league_name: str, report_id: int):
