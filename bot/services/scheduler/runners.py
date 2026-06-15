@@ -270,6 +270,14 @@ class TaskRunners:
             if retries + 1 >= 5:
                 league_name = getattr(match, 'league_name', 'Unknown League')
                 fixture_id = match.id
+                
+                # ✅ FIX: Mark match as finished so it disappears from dashboard
+                await self._update_match(
+                    match_id,
+                    is_finished=True,
+                    skip_reason="score_unavailable_after_5_retries"
+                )
+                
                 async with async_session() as session:
                     report = LeagueReport(fixture_id=fixture_id, api_football_league_id=None, league_name=league_name, report_reason='missing_full_time_score')
                     session.add(report)
