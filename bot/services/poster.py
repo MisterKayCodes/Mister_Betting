@@ -181,3 +181,17 @@ async def post_step5_final_slip(bot: Bot, match, is_win: bool) -> int | None:
     pool = "win" if is_win else "lose"
     caption = await get_caption(pool, admin_user)
     return await _send_photo(bot, img_path, caption)
+
+
+async def post_cancelled_message(bot: Bot, match, admin_user: str) -> None:
+    """Post a cancellation message when match is cancelled/postponed."""
+    text = (
+        f"⚽ <b>MATCH CANCELLED / POSTPONED</b>\n\n"
+        f"🏆 {match.league_name}\n"
+        f"{match.home_team} vs {match.away_team}\n\n"
+        f"😤 Unfortunately, this match has been cancelled or postponed.\n\n"
+        f"✨ <b>VIP subscribers:</b> Your subscription has been extended by +1 FREE DAY.\n\n"
+        f"The next VIP game will be even bigger! 🔥\n\n"
+        f"DM @{admin_user} for questions."
+    )
+    await _send_photo(bot, None, text)  # No image, just text

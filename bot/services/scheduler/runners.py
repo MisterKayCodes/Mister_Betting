@@ -42,6 +42,23 @@ class TaskRunners:
             )
             await session.commit()
 
+    def _is_match_stuck(self, match) -> bool:
+        """
+        Returns True if match should be considered cancelled.
+        Rule: Kickoff was more than 3 hours ago AND still not finished.
+        """
+        if match.kickoff_time is None:
+            return False
+        
+        hours_since_kickoff = (datetime.utcnow() - match.kickoff_time).total_seconds() / 3600
+        
+        # If 3+ hours passed and match not finished
+        if hours_since_kickoff > 3 and not match.is_finished:
+            logger.debug(f"[STUCK CHECK] Match {match.id}: {hours_since_kickoff:.1f}h passed, still not finished")
+            return True
+        
+        return False
+
     # ── Generic post-and-verify wrapper ─────────────────────────────────────
 
     async def _post_and_verify(
@@ -302,6 +319,21 @@ class TaskRunners:
             retries = getattr(match, 'result_fetch_retries', 0) or 0
             await self._update_match(match_id, result_fetch_retries=retries + 1, last_result_fetch_attempt=datetime.utcnow())
 
+            # ── NEW: Check if match is STUCK (NS for >3 hours) ───────────────
+            if self._is_match_stuck(match):
+                logger.warning(f"[STEP 4] Match {match_id} is STUCK (NS for >3h). Marking as cancelled.")
+                
+                admin_user = await poster._get_admin_username()
+                await poster.post_cancelled_message(self.bot, match, admin_user)
+                
+                await self._update_match(
+                    match_id,
+                    is_finished=True,
+                    skip_reason="match_cancelled_ns_stuck"
+                )
+                return
+
+            
             # If exceeded retry threshold, log a league report and notify admin with quick blacklist action
             if retries + 1 >= 5:
                 league_name = getattr(match, 'league_name', 'Unknown League')
