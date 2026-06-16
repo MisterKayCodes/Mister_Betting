@@ -59,6 +59,10 @@ async def _send_photo(bot: Bot, image_path: str, caption: str) -> int | None:
                 return sent.message_id
             else:
                 logger.warning("[POSTER] send_photo returned no message_id. Treating as failure.")
+        except asyncio.TimeoutError:
+            # Timeout means the message was likely sent. Don't retry.
+            logger.warning(f"[POSTER] Timeout on attempt {attempt}. Message was likely sent. Not retrying.")
+            return None  # Stop retrying
         except Exception as e:
             logger.warning(f"[POSTER] Attempt {attempt}/{MAX_RETRIES} failed: {e}")
             if attempt < MAX_RETRIES:
