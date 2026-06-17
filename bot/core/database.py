@@ -91,6 +91,11 @@ _REQUIRED_COLUMNS = {
     "step3_retries":           "INTEGER DEFAULT 0",
     "step4_retries":           "INTEGER DEFAULT 0",
     "step5_retries":           "INTEGER DEFAULT 0",
+    
+    # ── NEW: Stuck match detection & cleanup columns ──────────────────────
+    "result_fetch_retries":    "INTEGER DEFAULT 0",
+    "last_result_fetch_attempt": "DATETIME",
+    "skip_reason":             "TEXT",
 }
 
 
