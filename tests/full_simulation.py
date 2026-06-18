@@ -102,17 +102,25 @@ async def test_phase2_database():
 # ══════════════════════════════════════════════
 # PHASE 3: Win/Loss Engine (71.4% target)
 # ══════════════════════════════════════════════
-def test_phase3_winloss():
+async def test_phase3_winloss():
     print("\n" + "=" * 60)
     print("PHASE 3: Win/Loss Engine (71.4% Target)")
     print("=" * 60)
     
     from bot.services.win_loss_engine import WinLossEngine
+    from unittest.mock import AsyncMock, MagicMock
     
     eng = WinLossEngine()
     results = []
     for _ in range(70):
-        results.append(eng.determine_next_outcome())
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        current_db_history = results[-7:][::-1]
+        mock_result.scalars.return_value.all.return_value = current_db_history
+        mock_session.execute.return_value = mock_result
+        
+        outcome = await eng.determine_next_outcome(mock_session)
+        results.append(outcome)
     
     wins = results.count(True)
     losses = results.count(False)
@@ -394,7 +402,7 @@ def test_phase9_losing_score():
     print("PHASE 9: Losing Score Picker (_pick_losing_score)")
     print("=" * 60)
     
-    from bot.services.scheduler import _pick_losing_score
+    from bot.services.win_loss_engine import pick_losing_score as _pick_losing_score
     
     # Normal case: real score 2-1, odds map has nearby scores
     odds = json.dumps({"1-0": 6.50, "2-0": 10.00, "1-1": 5.50, "2-1": 9.50, "3-1": 18.00})
@@ -454,7 +462,7 @@ async def main():
     await test_phase2_database()
     
     # Phase 3: Win/Loss Engine
-    test_phase3_winloss()
+    await test_phase3_winloss()
     
     # Phase 4: Captions
     await test_phase4_captions()

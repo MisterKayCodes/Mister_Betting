@@ -107,11 +107,11 @@ class TimelineScheduler:
         t2 = k - timedelta(hours=2)  # Step 2: Urgency Post
         t3 = k - timedelta(hours=1)  # Step 3: Black Box Slip
 
-        # POST-MATCH TIMELINE (Corrected Sequence Math Bug)
-        # Step 5 (Final Ticket) fires immediately at final whistle (1h 50m to 2h 10m after kickoff)
-        t5 = k + timedelta(hours=1, minutes=50) + timedelta(minutes=random.randint(0, 20))
-        # Step 4 (Full-Time Result) fires slightly later to confirm final score data
-        t4 = k + timedelta(hours=2, minutes=30)
+        # POST-MATCH TIMELINE (Corrected Sequence Timing)
+        # Step 4 (Full-Time Result) fires immediately at final whistle to fetch final score data
+        t4 = k + timedelta(hours=1, minutes=50) + timedelta(minutes=random.randint(0, 20))
+        # Step 5 (Final Ticket) fires slightly later to post the winning/losing ticket
+        t5 = k + timedelta(hours=2, minutes=30)
 
         now = datetime.utcnow()
         missed_jobs = []

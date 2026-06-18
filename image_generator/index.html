@@ -256,7 +256,7 @@ const App = () => {
                 {view === 'slip-before' && <OpenBetSlip match={matchData} hideOdds={true} />}
                 {view === 'preview-after' && <PreviewCard match={matchData} isFinished={true} />}
                 {view === 'slip-won' && <WonBetSlip match={matchData} isWin={true} />}
-                {view === 'slip-lost' && <WonBetSlip match={{...matchData, claimedHomeScore: 1, claimedAwayScore: 2}} isWin={false} />}
+                {view === 'slip-lost' && <WonBetSlip match={matchData} isWin={false} />}
             </div>
         </div>
     );

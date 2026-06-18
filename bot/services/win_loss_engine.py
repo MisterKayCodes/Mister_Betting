@@ -9,12 +9,20 @@ class WinLossEngine:
     Target: ~71.4% win rate (5 wins out of 7 matches).
     Rules: Persistent history lookup through the database.
     """
+    def __init__(self):
+        self.forced_outcome = None
     
     async def determine_next_outcome(self, session) -> bool:
         """
         Dynamically fetches actual past match statuses from DB 
         to accurately maintain streak safety rules.
         """
+        if self.forced_outcome is not None:
+            choice = self.forced_outcome
+            self.forced_outcome = None  # Consume the override
+            logger.warning(f"[WinLossEngine] Forcing outcome to: {choice} per admin command.")
+            return choice
+
         from bot.core.database import Match
         
         # Fetch the last 7 processed matches ordered by kickoff time

@@ -89,7 +89,7 @@ async def _handle_force_outcome(cb: CallbackQuery, data: str):
     from bot.services.win_loss_engine import engine
     
     outcome_bool = (data == "adm_force_win")
-    engine.history.append(outcome_bool)
+    engine.forced_outcome = outcome_bool
     label = "WIN 🏆" if outcome_bool else "LOSS ❌"
     
     logger.warning(f"[ADMIN] Next match forced to {label} by @{cb.from_user.username}")

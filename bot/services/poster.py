@@ -41,6 +41,31 @@ async def _send_photo(bot: Bot, image_path: str, caption: str) -> int | None:
         logger.error("[POSTER] CHANNEL_ID not set — cannot post. Set it in .env or via /set_channel.")
         return None
 
+    if not image_path:
+        # Text-only message path
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                sent = await bot.send_message(
+                    chat_id=CHANNEL_ID,
+                    text=caption,
+                    parse_mode="HTML"
+                )
+                if sent and sent.message_id:
+                    logger.success(
+                        f"[POSTER] ✅ Posted text-only to {CHANNEL_ID} — message_id={sent.message_id}"
+                    )
+                    return sent.message_id
+                else:
+                    logger.warning("[POSTER] send_message returned no message_id. Treating as failure.")
+            except asyncio.TimeoutError:
+                logger.warning(f"[POSTER] Timeout on attempt {attempt}. Message was likely sent. Not retrying.")
+                return None
+            except Exception as e:
+                logger.warning(f"[POSTER] Attempt {attempt}/{MAX_RETRIES} failed: {e}")
+                if attempt < MAX_RETRIES:
+                    await asyncio.sleep(RETRY_DELAY)
+        return None
+
     if not os.path.exists(image_path):
         logger.error(f"[POSTER] Image file not found: {image_path}")
         return None

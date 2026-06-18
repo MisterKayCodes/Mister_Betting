@@ -190,13 +190,32 @@ class TaskRunners:
 
         # ── SAFETY CHECK: Don't post without real score ─────────────────────
         if not match.is_finished or match.real_home_score is None:
-            logger.error(f"[STEP 5] Match {match_id} has no real score. Cannot post final slip. Skipping.")
-            # Mark as finished to prevent infinite retries
-            await self._update_match(
-                match_id,
-                is_finished=True,
-                skip_reason="no_score_available_for_final_slip"
-            )
+            retries = getattr(match, 'step5_retries', 0) or 0
+            if retries + 1 < MAX_STEP_RETRIES:
+                retry_at = datetime.utcnow() + timedelta(minutes=RETRY_INTERVAL_MINUTES)
+                self.scheduler.add_job(
+                    self.run_step5, "date",
+                    run_date=retry_at,
+                    args=[match_id],
+                    id=f"retry_step5_{match_id}_attempt{retries+2}",
+                    replace_existing=True,
+                    misfire_grace_time=None,
+                )
+                await self._update_match(match_id, step5_retries=retries + 1)
+                logger.warning(
+                    f"[STEP 5] Match {match_id} has no real score (attempt {retries+1}/{MAX_STEP_RETRIES}). "
+                    f"Rescheduling retry in {RETRY_INTERVAL_MINUTES} min."
+                )
+            else:
+                logger.critical(
+                    f"[STEP 5] 🔴 GAVE UP on match {match_id} after {MAX_STEP_RETRIES} attempts "
+                    f"due to missing score. Marking finished."
+                )
+                await self._update_match(
+                    match_id,
+                    is_finished=True,
+                    skip_reason="no_score_available_for_final_slip"
+                )
             return
 
         async with async_session() as session:
