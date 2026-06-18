@@ -11,7 +11,7 @@ import os
 import sys
 import json
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -69,7 +69,7 @@ async def test_phase2_database():
         home_team="SimHome FC",
         away_team="SimAway United",
         league_name="SIMULATION LEAGUE",
-        kickoff_time=datetime.utcnow() + timedelta(hours=8),
+        kickoff_time=datetime.now(timezone.utc) + timedelta(hours=8),
         odds_data=json.dumps({"2-1": 9.50, "1-0": 6.50, "1-1": 5.50}),
     )
     async with async_session() as session:
@@ -88,7 +88,7 @@ async def test_phase2_database():
     test("Read match from DB",            match is not None)
     test("Match home_team is correct",     match.home_team == "SimHome FC")
     test("Match odds_data is valid JSON",  "2-1" in json.loads(match.odds_data))
-    test("Match kickoff_time is in future", match.kickoff_time > datetime.utcnow())
+    test("Match kickoff_time is in future", match.kickoff_time > datetime.now(timezone.utc))
     
     # Cleanup
     async with async_session() as session:
@@ -109,18 +109,15 @@ async def test_phase3_winloss():
     
     from bot.services.win_loss_engine import WinLossEngine
     from unittest.mock import AsyncMock, MagicMock
+    from bot.core.database import async_session as db_session
     
     eng = WinLossEngine()
     results = []
     for _ in range(70):
-        mock_session = AsyncMock()
-        mock_result = MagicMock()
-        current_db_history = results[-7:][::-1]
-        mock_result.scalars.return_value.all.return_value = current_db_history
-        mock_session.execute.return_value = mock_result
-        
-        outcome = await eng.determine_next_outcome(mock_session)
-        results.append(outcome)
+        # Create a real async session for the test
+        async with db_session() as session:
+            outcome = await eng.determine_next_outcome(session)
+            results.append(outcome)
     
     wins = results.count(True)
     losses = results.count(False)
@@ -232,7 +229,7 @@ def test_phase6_poster_data():
         home_team="SimHome FC",
         away_team="SimAway United",
         league_name="SIMULATION LEAGUE",
-        kickoff_time=datetime.utcnow() + timedelta(hours=5),
+        kickoff_time=datetime.now(timezone.utc) + timedelta(hours=5),
         odds_data=json.dumps({"2-1": 9.50, "1-0": 6.50}),
         real_home_score=2,
         real_away_score=1,
@@ -266,7 +263,7 @@ def test_phase6_poster_data():
         home_team="CrazyTeam A",
         away_team="CrazyTeam B",
         league_name="WILD LEAGUE",
-        kickoff_time=datetime.utcnow(),
+        kickoff_time=datetime.now(timezone.utc),
         odds_data=json.dumps({"1-0": 6.50, "2-1": 9.50}),
         real_home_score=4,
         real_away_score=3,
@@ -287,7 +284,7 @@ def test_phase7_scheduler_logic():
     print("PHASE 7: Scheduler (Rush Mode Logic — Dry Run)")
     print("=" * 60)
     
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     
     # Simulate a match kicking off in 3 hours
     kickoff = now + timedelta(hours=3)
