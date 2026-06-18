@@ -59,6 +59,18 @@ class TaskRunners:
         
         return False
 
+    async def _add_vip_compensation(self, match_id: int, reason: str):
+        """Add VIP compensation (+1 game) when match is postponed."""
+        from bot.core.database import async_session, VIPCompensation
+        
+        async with async_session() as session:
+            session.add(VIPCompensation(
+                reason=f"Match {match_id}: {reason}",
+                games_awarded=1
+            ))
+            await session.commit()
+            logger.info(f"[VIP] Added +1 compensation for match {match_id}. Reason: {reason}")
+
     # ── Generic post-and-verify wrapper ─────────────────────────────────────
 
     async def _post_and_verify(
@@ -345,6 +357,13 @@ class TaskRunners:
                     is_finished=True,
                     skip_reason="score_unavailable_after_5_retries"
                 )
+                
+                # ── NEW: Post postponement message to channel ──
+                admin_user = await poster._get_admin_username()
+                await poster.post_postponed_message(self.bot, match, admin_user)
+                
+                # ── NEW: Add VIP compensation ──
+                await self._add_vip_compensation(match.id, "match_postponed_no_score")
                 
                 async with async_session() as session:
                     report = LeagueReport(fixture_id=fixture_id, api_football_league_id=None, league_name=league_name, report_reason='missing_full_time_score')

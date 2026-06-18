@@ -1,3 +1,4 @@
+# bot/services/poster.py
 """
 poster.py — Responsible for generating images and sending them to the Telegram channel.
 
@@ -195,6 +196,20 @@ async def post_cancelled_message(bot: Bot, match, admin_user: str) -> None:
         f"{match.home_team} vs {match.away_team}\n\n"
         f"😤 Unfortunately, this match has been cancelled or postponed.\n\n"
         f"✨ <b>VIP subscribers:</b> Your subscription has been extended by +1 FREE DAY.\n\n"
+        f"The next VIP game will be even bigger! 🔥\n\n"
+        f"DM @{admin_user} for questions."
+    )
+    await _send_photo(bot, None, text)  # No image, just text
+
+
+async def post_postponed_message(bot: Bot, match, admin_user: str) -> None:
+    """Post a message when match is postponed (no FT score after 5 retries)."""
+    text = (
+        f"⚽ <b>MATCH POSTPONED / RESULT UNAVAILABLE</b>\n\n"
+        f"🏆 {match.league_name}\n"
+        f"{match.home_team} vs {match.away_team}\n\n"
+        f"⏳ The match result is still unavailable after multiple checks.\n\n"
+        f"✨ <b>VIP Compensation:</b> +1 FREE CORRECT SCORE added to your account.\n\n"
         f"The next VIP game will be even bigger! 🔥\n\n"
         f"DM @{admin_user} for questions."
     )
