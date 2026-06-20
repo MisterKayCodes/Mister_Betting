@@ -57,6 +57,10 @@ async def admin_callbacks(cb: CallbackQuery):
         await _handle_set_vip_price(cb)
     elif data == "adm_manage_whitelist":
         await _handle_manage_whitelist(cb)
+    elif data == "adm_update_match":
+        await _handle_update_match(cb)
+    elif data.startswith("adm_cancel_match:"):
+        await _handle_cancel_match_admin(cb, data)
 
 
 async def _handle_status(cb: CallbackQuery):
@@ -499,6 +503,8 @@ async def handle_text_replies(message: types.Message):
         await _handle_match_input(message)
     elif pending == "vip_price":
         await _handle_vip_price_input(message)
+    elif isinstance(pending, dict) and pending.get("type") == "score_update":
+        await _handle_score_input(message, pending["match_id"])
 
 
 async def _handle_vip_price_input(message: types.Message):
@@ -610,3 +616,208 @@ async def _handle_match_input(message: types.Message):
     except Exception as e:
         logger.error(f"[ADMIN] Manual match parse error: {e}")
         await message.answer(f"❌ Could not parse match. Error: {e}\n\nPlease use the exact format shown.")
+
+
+# ══════════════════════════════════════════════════════════════════
+# UPDATE MATCH — Manual Score Entry Flow
+# ══════════════════════════════════════════════════════════════════
+
+async def _handle_update_match(cb: CallbackQuery):
+    """
+    Finds the oldest stuck match (past kickoff, not finished, has retries)
+    and prompts admin to enter the score manually.
+    """
+    from bot.core.database import async_session, Match
+    from sqlalchemy import select
+
+    now = datetime.utcnow()
+
+    async with async_session() as session:
+        # Find oldest stuck match: past kickoff, not finished, retried at least once
+        q = await session.execute(
+            select(Match)
+            .where(
+                Match.is_finished == False,
+                Match.kickoff_time <= now,
+                Match.result_fetch_retries >= 1,
+            )
+            .order_by(Match.kickoff_time.asc())
+        )
+        match = q.scalars().first()
+
+    if not match:
+        await cb.answer("✅ No stuck matches found! Everything is running fine.", show_alert=True)
+        return
+
+    retries = match.result_fetch_retries or 0
+    hours_since = (now - match.kickoff_time).total_seconds() / 3600
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="❌ Cancel This Match",
+            callback_data=f"adm_cancel_match:{match.id}"
+        )]
+    ])
+
+    await cb.message.answer(
+        f"🛠 <b>Update Match Score</b>\n\n"
+        f"🏟 <b>{match.home_team}</b> vs <b>{match.away_team}</b>\n"
+        f"🏆 {match.league_name}\n"
+        f"⏱ Kicked off {hours_since:.1f}h ago · {retries} retries failed\n\n"
+        f"Reply with the <b>full-time score</b> in this format:\n"
+        f"<code>2:1</code>  (home goals : away goals)\n\n"
+        f"Or press the button below to cancel this match entirely.",
+        parse_mode="HTML",
+        reply_markup=kb
+    )
+    await cb.answer()
+
+    # Store state so the next text reply is treated as a score
+    _pending_set[cb.from_user.id] = {"type": "score_update", "match_id": match.id}
+
+
+async def _handle_cancel_match_admin(cb: CallbackQuery, data: str):
+    """
+    Admin manually cancelled a stuck match.
+    Posts cancellation to channel, marks as finished, and tries to auto-sync fresh matches.
+    """
+    from bot.core.database import async_session, Match
+    from bot.services import poster
+    from sqlalchemy import select, update
+
+    match_id = int(data.split(":")[1])
+
+    async with async_session() as session:
+        q = await session.execute(select(Match).where(Match.id == match_id))
+        match = q.scalar_one_or_none()
+
+    if not match:
+        await cb.answer("Match not found.", show_alert=True)
+        return
+
+    # Post cancellation to channel
+    try:
+        admin_user = await poster._get_admin_username()
+        await poster.post_cancelled_message(cb.bot, match, admin_user)
+    except Exception as e:
+        logger.error(f"[UPDATE MATCH] Failed to post cancellation message: {e}")
+        await cb.message.answer(f"⚠️ Could not post cancellation to channel: {e}")
+
+    # Mark match as finished in DB
+    async with async_session() as session:
+        await session.execute(
+            update(Match)
+            .where(Match.id == match_id)
+            .values(is_finished=True, skip_reason="admin_manual_cancel")
+        )
+        await session.commit()
+
+    await cb.message.edit_text(
+        f"✅ Match <b>{match.home_team} vs {match.away_team}</b> has been cancelled.\n"
+        f"Cancellation posted to channel.",
+        parse_mode="HTML"
+    )
+    await cb.answer()
+
+    # Clear any pending score state for this admin
+    _pending_set.pop(cb.from_user.id, None)
+
+    # Try to pull fresh matches
+    try:
+        from bot.services.scheduler.manager import TimelineScheduler
+        temp_scheduler = TimelineScheduler(cb.bot)
+        await temp_scheduler._auto_cache_sync()
+    except Exception as e:
+        logger.error(f"[UPDATE MATCH] Failed to auto-sync fresh matches after manual cancel: {e}")
+        await cb.message.answer(f"⚠️ Auto-sync failed: {e}")
+
+
+async def _handle_score_input(message: types.Message, match_id: int):
+    """
+    Parses the admin's score reply (e.g. '2:1') and manually triggers
+    Step 4 (result preview) and Step 5 (final slip) for the stuck match.
+    Uses rush mode timing if kickoff was long ago.
+    """
+    from bot.core.database import async_session, Match
+    from bot.services.scheduler.runners import TaskRunners
+    from bot.services.scheduler.manager import TimelineScheduler
+    from sqlalchemy import select, update
+
+    raw = message.text.strip()
+
+    # Parse score — accept '2:1' or '2-1'
+    try:
+        sep = ":" if ":" in raw else "-"
+        parts = raw.split(sep)
+        home_score = int(parts[0].strip())
+        away_score = int(parts[1].strip())
+    except Exception:
+        await message.answer(
+            "❌ Could not parse score. Please reply with format: <code>2:1</code>",
+            parse_mode="HTML"
+        )
+        # Re-register the pending state so admin can try again
+        _pending_set[message.from_user.id] = {"type": "score_update", "match_id": match_id}
+        return
+
+    # Load the match
+    async with async_session() as session:
+        q = await session.execute(select(Match).where(Match.id == match_id))
+        match = q.scalar_one_or_none()
+
+    if not match:
+        await message.answer("❌ Match not found in database. It may have been removed.")
+        return
+
+    # Save the real scores to the database
+    async with async_session() as session:
+        await session.execute(
+            update(Match)
+            .where(Match.id == match_id)
+            .values(real_home_score=home_score, real_away_score=away_score)
+        )
+        await session.commit()
+
+    logger.info(f"[UPDATE MATCH] Admin set score for match {match_id}: {home_score}-{away_score}")
+    await message.answer(
+        f"✅ Score saved: <b>{match.home_team} {home_score} – {away_score} {match.away_team}</b>\n\n"
+        f"⏳ Triggering result posts now...",
+        parse_mode="HTML"
+    )
+
+    # Determine if we need rush mode (match was long ago)
+    now = datetime.utcnow()
+    hours_since_kickoff = (now - match.kickoff_time).total_seconds() / 3600 if match.kickoff_time else 0
+    use_rush = hours_since_kickoff > 1.5  # More than 1.5 hours late = rush mode
+
+    # Build a temporary scheduler/runners to fire Steps 4 and 5
+    try:
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+        temp_sched = AsyncIOScheduler(timezone="UTC")
+        temp_sched.start()
+        runners = TaskRunners(message.bot, temp_sched)
+
+        if use_rush:
+            # Rush: fire Step 4 immediately, then Step 5 one minute later
+            import asyncio
+            await runners.run_step4(match_id)
+            await asyncio.sleep(60)
+            await runners.run_step5(match_id)
+        else:
+            # Normal: use the existing scheduler timing from TimelineScheduler
+            temp_timeline = TimelineScheduler(message.bot)
+            await temp_timeline.schedule_match(match)
+
+        temp_sched.shutdown(wait=False)
+
+        await message.answer(
+            f"✅ Steps 4 & 5 triggered for <b>{match.home_team} vs {match.away_team}</b>.",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logger.error(f"[UPDATE MATCH] Failed to trigger Steps 4/5 for match {match_id}: {e}")
+        await message.answer(
+            f"⚠️ <b>Error posting result steps:</b> {e}\n\n"
+            f"The score has been saved in the database. You may need to restart or re-trigger manually.",
+            parse_mode="HTML"
+        )

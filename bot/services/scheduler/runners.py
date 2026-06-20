@@ -42,20 +42,40 @@ class TaskRunners:
             )
             await session.commit()
 
-    def _is_match_stuck(self, match) -> bool:
+    async def _is_match_stuck(self, match) -> bool:
         """
         Returns True if match should be considered cancelled.
-        Rule: Kickoff was more than 3 hours ago AND still not finished.
+        Rule: Kickoff was more than 6 hours ago AND still not finished,
+        OR the next match's kickoff time is approaching (within 1.5 hours).
         """
         if match.kickoff_time is None:
             return False
         
-        hours_since_kickoff = (datetime.utcnow() - match.kickoff_time).total_seconds() / 3600
+        now = datetime.utcnow()
+        hours_since_kickoff = (now - match.kickoff_time).total_seconds() / 3600
         
-        # If 3+ hours passed and match not finished
-        if hours_since_kickoff > 3 and not match.is_finished:
+        if match.is_finished:
+            return False
+            
+        # Rule 1: 6+ hours passed
+        if hours_since_kickoff > 6:
             logger.debug(f"[STUCK CHECK] Match {match.id}: {hours_since_kickoff:.1f}h passed, still not finished")
             return True
+            
+        # Rule 2: Next match is approaching, we must forcefully cancel this one
+        from bot.core.database import async_session, Match
+        from sqlalchemy import select
+        async with async_session() as session:
+            q = await session.execute(
+                select(Match).where(Match.is_finished == False, Match.id != match.id, Match.kickoff_time > now)
+                .order_by(Match.kickoff_time.asc())
+            )
+            next_match = q.scalars().first()
+            if next_match and next_match.kickoff_time:
+                hours_until_next = (next_match.kickoff_time - now).total_seconds() / 3600
+                if hours_until_next < 1.5:
+                    logger.warning(f"[STUCK CHECK] Match {match.id} is stuck and next match {next_match.id} starts in {hours_until_next:.1f}h. Forcing cancel.")
+                    return True
         
         return False
 
@@ -350,9 +370,9 @@ class TaskRunners:
             retries = getattr(match, 'result_fetch_retries', 0) or 0
             await self._update_match(match_id, result_fetch_retries=retries + 1, last_result_fetch_attempt=datetime.utcnow())
 
-            # ── NEW: Check if match is STUCK (NS for >3 hours) ───────────────
-            if self._is_match_stuck(match):
-                logger.warning(f"[STEP 4] Match {match_id} is STUCK (NS for >3h). Marking as cancelled.")
+            # ── NEW: Check if match is STUCK (Smart Cancel: 6h or next match approaching) ───────────────
+            if await self._is_match_stuck(match):
+                logger.warning(f"[STEP 4] Match {match_id} is STUCK (NS for >6h). Marking as cancelled.")
                 
                 admin_user = await poster._get_admin_username()
                 await poster.post_cancelled_message(self.bot, match, admin_user)
@@ -362,68 +382,59 @@ class TaskRunners:
                     is_finished=True,
                     skip_reason="match_cancelled_ns_stuck"
                 )
+                
+                # Try to pull fresh matches using the auto-sync feature
+                try:
+                    from bot.services.scheduler.manager import TimelineScheduler
+                    temp_scheduler = TimelineScheduler(self.bot)
+                    await temp_scheduler._auto_cache_sync()
+                except Exception as e:
+                    logger.error(f"Failed to auto-sync fresh matches after cancel: {e}")
                 return
 
             
-            # If exceeded retry threshold, log a league report and notify admin with quick blacklist action
-            if retries + 1 >= 5:
+            # If exactly 5 retries (1h 15m), log a league report and notify admin to manually update
+            if retries + 1 == 5:
                 league_name = getattr(match, 'league_name', 'Unknown League')
                 fixture_id = match.id
-                
-                # ✅ FIX: Mark match as finished so it disappears from dashboard
-                await self._update_match(
-                    match_id,
-                    is_finished=True,
-                    skip_reason="score_unavailable_after_5_retries"
-                )
-                
-                # ── NEW: Post postponement message to channel ──
-                admin_user = await poster._get_admin_username()
-                await poster.post_postponed_message(self.bot, match, admin_user)
-                
-                # ── NEW: Add VIP compensation ──
-                await self._add_vip_compensation(match.id, "match_postponed_no_score")
                 
                 async with async_session() as session:
                     report = LeagueReport(fixture_id=fixture_id, api_football_league_id=None, league_name=league_name, report_reason='missing_full_time_score')
                     session.add(report)
                     await session.commit()
                     report_id = report.id
+                    
+                    # Count strikes
+                    from sqlalchemy import func
+                    count_q = await session.execute(
+                        select(func.count()).select_from(LeagueReport)
+                        .where(LeagueReport.league_name == league_name)
+                    )
+                    strikes = count_q.scalar() or 1
 
-                # Notify admin via direct message with a blacklist button
+                # Notify admin via direct message
                 try:
                     async with async_session() as session:
                         row = (await session.execute(select(AppConfig).where(AppConfig.key == 'admin_chat_id'))).scalar_one_or_none()
                         if row:
                             admin_chat = int(row.value)
-                            kb = InlineKeyboardMarkup(inline_keyboard=[
-                                [InlineKeyboardButton(text='🚫 Blacklist League', callback_data=f"adm_blacklist_report:{report_id}"),
-                                 InlineKeyboardButton(text='Ignore', callback_data='adm_view_jobs')]
-                            ])
-                            await self.bot.send_message(admin_chat, f"⚠️ League {league_name} has failed to provide final scores for fixture {fixture_id} after 5 attempts. You can blacklist this league to prevent future picks.", reply_markup=kb, parse_mode='HTML')
+                            kb_buttons = [
+                                [InlineKeyboardButton(text='🛠 Update Match', callback_data='adm_update_match')]
+                            ]
+                            
+                            if strikes >= 3:
+                                kb_buttons.append([InlineKeyboardButton(text='🚫 Blacklist League', callback_data=f"adm_blacklist_report:{report_id}")])
+                                msg_text = f"⚠️ League <b>{league_name}</b> has failed to provide final scores {strikes} times.\n\nYou can manually update the score or blacklist this league."
+                            else:
+                                msg_text = f"⚠️ Score missing for fixture {fixture_id} after 5 attempts. Use <b>Update Match</b> below to resolve it manually."
+                                
+                            kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
+                            await self.bot.send_message(admin_chat, msg_text, reply_markup=kb, parse_mode='HTML')
                 except Exception as e:
                     logger.error(f"[STEP 4] Failed to notify admin about missing score: {e}")
 
-                # Schedule auto-blacklist check at next match kickoff - 9 hours
-                try:
-                    async with async_session() as session:
-                        now = datetime.utcnow()
-                        q = await session.execute(select(Match).where(Match.league_name == league_name, Match.kickoff_time > now).order_by(Match.kickoff_time.asc()))
-                        next_match = q.scalar_one_or_none()
-                        if next_match:
-                            check_at = next_match.kickoff_time - timedelta(hours=9)
-                            if check_at <= datetime.utcnow():
-                                await self._auto_blacklist_check(league_name, report_id)
-                            else:
-                                self.scheduler.add_job(
-                                    self._auto_blacklist_check, 'date', run_date=check_at,
-                                    args=[league_name, report_id], id=f"auto_blacklist_{league_name}_{report_id}", replace_existing=True
-                                )
-                except Exception as e:
-                    logger.error(f"[STEP 4] Failed to schedule auto-blacklist check: {e}")
-
                 logger.critical(f"[STEP 4] Match {match_id} exceeded result fetch retries — report created for {league_name}.")
-                return
+                # WE DO NOT RETURN. We fall through so it keeps retrying every 15 mins!
 
             # Otherwise schedule another retry in 15 minutes
             self.scheduler.add_job(

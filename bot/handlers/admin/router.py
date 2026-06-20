@@ -32,10 +32,11 @@ def main_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🏆 Force Next WIN",    callback_data="adm_force_win"),
          InlineKeyboardButton(text="❌ Force Next LOSS",   callback_data="adm_force_lose")],
         [InlineKeyboardButton(text="📡 Set Channel",       callback_data="adm_set_channel")],
-        [InlineKeyboardButton(text="💰 Set VIP Price",     callback_data="adm_set_vip_price")],  # ← ADD THIS LINE
+        [InlineKeyboardButton(text="💰 Set VIP Price",     callback_data="adm_set_vip_price")],
         [InlineKeyboardButton(text="⚽ Add Match Manually", callback_data="adm_add_match")],
+        [InlineKeyboardButton(text="🛠 Update Match",      callback_data="adm_update_match")],
         [InlineKeyboardButton(text="🔄 Sync Matches Now",  callback_data="adm_sync_now"),
          InlineKeyboardButton(text="🗑 Clear All Matches", callback_data="adm_clear_db")],
         [InlineKeyboardButton(text="📅 View Jobs",         callback_data="adm_view_jobs")],
-        [InlineKeyboardButton(text="📋 Manage Whitelist",  callback_data="adm_manage_whitelist")],  # ← OPTIONAL: also add this
+        [InlineKeyboardButton(text="📋 Manage Whitelist",  callback_data="adm_manage_whitelist")],
     ])
