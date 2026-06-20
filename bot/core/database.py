@@ -53,6 +53,12 @@ class Match(Base):
     claimed_home_score = Column(Integer, nullable=True)
     claimed_away_score = Column(Integer, nullable=True)
 
+    # ── Stuck-match detection & cleanup ──────────────────────────────────────
+    result_fetch_retries     = Column(Integer, default=0)
+    last_result_fetch_attempt = Column(DateTime, nullable=True)
+    skip_reason              = Column(String, nullable=True)
+
+
 
 class AppConfig(Base):
     __tablename__ = "app_config"
