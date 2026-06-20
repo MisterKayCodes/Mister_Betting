@@ -629,16 +629,19 @@ async def _handle_update_match(cb: CallbackQuery):
     """
     from bot.core.database import async_session, Match
     from sqlalchemy import select
+    from datetime import timedelta
 
     now = datetime.utcnow()
+    cutoff = now - timedelta(hours=48)
 
     async with async_session() as session:
-        # Find oldest stuck match: past kickoff, not finished, retried at least once
+        # Find oldest stuck match within the last 48 hours
         q = await session.execute(
             select(Match)
             .where(
                 Match.is_finished == False,
                 Match.kickoff_time <= now,
+                Match.kickoff_time >= cutoff,
                 Match.result_fetch_retries >= 1,
             )
             .order_by(Match.kickoff_time.asc())
