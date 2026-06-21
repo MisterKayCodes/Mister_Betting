@@ -163,6 +163,10 @@ class TaskRunners:
     # ── Step runners ─────────────────────────────────────────────────────────
 
     async def run_step1(self, match_id: int):
+        match = await self._load_match(match_id)
+        if not match or match.preview_posted:
+            return
+
         await self._post_and_verify(
             step_num=1,
             match_id=match_id,
@@ -174,6 +178,10 @@ class TaskRunners:
         )
 
     async def run_step2(self, match_id: int):
+        match = await self._load_match(match_id)
+        if not match or match.urgency_posted:
+            return
+
         await self._post_and_verify(
             step_num=2,
             match_id=match_id,
@@ -185,6 +193,10 @@ class TaskRunners:
         )
 
     async def run_step3(self, match_id: int):
+        match = await self._load_match(match_id)
+        if not match or match.before_slip_posted:
+            return
+
         await self._post_and_verify(
             step_num=3,
             match_id=match_id,
@@ -206,6 +218,10 @@ class TaskRunners:
         match = await self._load_match(match_id)
         if not match:
             logger.error(f"[STEP 5] Match {match_id} not found in DB.")
+            return
+
+        if match.final_slip_posted:
+            logger.info(f"[STEP 5] Match {match_id} already posted slip. Skipping.")
             return
 
         # ── SAFETY CHECK: Don't post without real score ─────────────────────
@@ -339,6 +355,9 @@ class TaskRunners:
 
         match = await self._load_match(match_id)
         if not match:
+            return
+
+        if match.result_preview_posted:
             return
 
         # If admin manually set the score, it will be finished with a score.
