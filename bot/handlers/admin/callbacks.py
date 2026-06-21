@@ -777,7 +777,7 @@ async def _handle_score_input(message: types.Message, match_id: int):
         await session.execute(
             update(Match)
             .where(Match.id == match_id)
-            .values(real_home_score=home_score, real_away_score=away_score)
+            .values(real_home_score=home_score, real_away_score=away_score, is_finished=True)
         )
         await session.commit()
 

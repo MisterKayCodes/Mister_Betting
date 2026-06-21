@@ -341,6 +341,19 @@ class TaskRunners:
         if not match:
             return
 
+        # If admin manually set the score, it will be finished with a score.
+        if match.is_finished and match.real_home_score is not None:
+            await self._post_and_verify(
+                step_num=4,
+                match_id=match_id,
+                post_fn=poster.post_step4_result,
+                posted_flag="result_preview_posted",
+                msg_id_field="step4_message_id",
+                retry_field="step4_retries",
+                retry_fn=self.run_step4,
+            )
+            return
+
         fetcher = MatchDataFetcher()
         result = await fetcher.fetch_match_result(match_id)
 
