@@ -624,7 +624,7 @@ async def _handle_match_input(message: types.Message):
 
 async def _handle_update_match(cb: CallbackQuery):
     """
-    Finds the oldest stuck match (past kickoff, not finished, has retries)
+    Finds the oldest stuck match (past kickoff, not finished)
     and prompts admin to enter the score manually.
     """
     from bot.core.database import async_session, Match
@@ -636,13 +636,13 @@ async def _handle_update_match(cb: CallbackQuery):
 
     async with async_session() as session:
         # Find oldest stuck match within the last 48 hours
+        # ✅ FIX: Removed the retries condition - find ANY stuck match
         q = await session.execute(
             select(Match)
             .where(
                 Match.is_finished == False,
                 Match.kickoff_time <= now,
                 Match.kickoff_time >= cutoff,
-                Match.result_fetch_retries >= 1,
             )
             .order_by(Match.kickoff_time.asc())
         )
