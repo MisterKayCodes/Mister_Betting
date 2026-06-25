@@ -2,8 +2,10 @@
 main.py — Entry point. Wires bot, database, scheduler, and all handlers together.
 """
 import asyncio
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, BaseMiddleware
+from aiogram.types import Update
 from loguru import logger
+import time
 
 from bot.core.config import BOT_TOKEN
 from bot.core.database import init_db
@@ -12,6 +14,27 @@ from bot.services.scheduler import TimelineScheduler
 from bot.services.telegram_logger import setup_telegram_debugger
 
 import logging
+
+
+# ─── HEARTBEAT WATCHDOG TRACKER START ───
+# Global tracking variable for loop health checks
+LAST_BOT_HEARTBEAT = time.time()
+
+class HeartbeatMiddleware(BaseMiddleware):
+    """Touches our global timer on every single update processed to prove loop vitality."""
+    async def __call__(self, handler, event: Update, data: dict):
+        global LAST_BOT_HEARTBEAT
+        LAST_BOT_HEARTBEAT = time.time()
+        return await handler(event, data)
+
+async def monitor_polling_vitality():
+    """Fallback heartbeat driver that keeps the timestamp moving even on quiet days."""
+    global LAST_BOT_HEARTBEAT
+    while True:
+        await asyncio.sleep(60)
+        LAST_BOT_HEARTBEAT = time.time()
+
+# ─── HEARTBEAT WATCHDOG TRACKER END ───
 
 class InterceptHandler(logging.Handler):
     def emit(self, record):
@@ -45,6 +68,10 @@ async def main():
     bot = Bot(token=BOT_TOKEN)
     dp  = Dispatcher()
 
+    # ─── REGISTER THE HEARTBEAT MIDDLEWARE ───
+    dp.update.outer_middleware(HeartbeatMiddleware())
+    
+
     # 3. Attach Live Telegram Debugger
     setup_telegram_debugger(bot)
 
@@ -61,6 +88,9 @@ async def main():
     #    (so the bot works right away after first launch)
     logger.info("Running immediate match scan on startup...")
     await scheduler._daily_match_scan()
+
+    # ─── START THE HEARTBEAT TASK HERE ───
+    asyncio.create_task(monitor_polling_vitality())
 
     # 6. Start polling Telegram
     logger.success("Bot is polling. Send /start to your bot in Telegram!")

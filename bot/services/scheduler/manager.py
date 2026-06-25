@@ -57,6 +57,13 @@ class TimelineScheduler:
             self._clean_old_images, "interval", days=14,
             id="image_cleaner", replace_existing=True
         )
+        # ─── NEW JOB RIGHT HERE  ───
+        # Every 5 minutes — Verify if the main loop has frozen
+        self.scheduler.add_job(
+            self._watchdog_health_check, "interval", minutes=5,
+            id="deadlock_watchdog", replace_existing=True
+        )
+        # ────────────────────────────────────
         logger.info("[SCHEDULER] Daily scan, 48h sync, health report, and image cleaner jobs registered.")
         
         # ── NEW: Check if DB is empty on startup ──────────────────────────────
