@@ -304,3 +304,27 @@ class TimelineScheduler:
             f"[CLEANER] 🧹 Image cleanup done — {deleted} file(s) deleted, "
             f"{errors} error(s). Images newer than 7 days are untouched."
         )
+
+
+    async def _watchdog_health_check(self):
+        """
+        Monitors the main event loop's tracking timestamp.
+        If the network thread hangs silently for > 10 minutes, forces a loud crash
+        so PM2 restarts the process and fires Rush Mode.
+        """
+        import os
+        import time
+        from bot.main import LAST_BOT_HEARTBEAT
+
+        current_time = time.time()
+        drift = current_time - LAST_BOT_HEARTBEAT
+
+        if drift > 600:  # 10 Minutes flat
+            logger.critical(
+                f"[WATCHDOG] SILENT DEADLOCK DETECTED! Loop hasn't ticked in {int(drift)}s. "
+                f"Forcing immediate application recycling via PM2..."
+            )
+            # Hard kill the app process instantly so it can break out of network locks
+            os._exit(1)
+        else:
+            logger.debug(f"[WATCHDOG] Main loop verification clear. Last active: {int(drift)} seconds ago.")
