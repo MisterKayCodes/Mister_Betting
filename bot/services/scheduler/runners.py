@@ -457,82 +457,82 @@ class TaskRunners:
             "Rescheduling retry in 15 min."
         )
 
-            # Increment per-match result fetch retry counter and record attempt time
-            retries = getattr(match, 'result_fetch_retries', 0) or 0
-            await self._update_match(match_id, result_fetch_retries=retries + 1, last_result_fetch_attempt=datetime.utcnow())
+        # Increment per-match result fetch retry counter and record attempt time
+        retries = getattr(match, 'result_fetch_retries', 0) or 0
+        await self._update_match(match_id, result_fetch_retries=retries + 1, last_result_fetch_attempt=datetime.utcnow())
 
-            # ── NEW: Check if match is STUCK (Smart Cancel: 6h or next match approaching) ───────────────
-            if await self._is_match_stuck(match):
-                logger.warning(f"[STEP 4] Match {match_id} is STUCK (NS for >6h). Marking as cancelled.")
-                
-                admin_user = await poster._get_admin_username()
-                await poster.post_cancelled_message(self.bot, match, admin_user)
-                
-                await self._update_match(
-                    match_id,
-                    is_finished=True,
-                    skip_reason="match_cancelled_ns_stuck"
-                )
-                
-                # Try to pull fresh matches using the auto-sync feature
-                try:
-                    from bot.services.scheduler.manager import TimelineScheduler
-                    temp_scheduler = TimelineScheduler(self.bot)
-                    await temp_scheduler._auto_cache_sync()
-                except Exception as e:
-                    logger.error(f"Failed to auto-sync fresh matches after cancel: {e}")
-                return
-
+        # ── NEW: Check if match is STUCK (Smart Cancel: 6h or next match approaching) ───────────────
+        if await self._is_match_stuck(match):
+            logger.warning(f"[STEP 4] Match {match_id} is STUCK (NS for >6h). Marking as cancelled.")
             
-            # If exactly 5 retries (1h 15m), log a league report and notify admin to manually update
-            if retries + 1 == 5:
-                league_name = getattr(match, 'league_name', 'Unknown League')
-                fixture_id = match.id
-                
-                async with async_session() as session:
-                    report = LeagueReport(fixture_id=fixture_id, api_football_league_id=None, league_name=league_name, report_reason='missing_full_time_score')
-                    session.add(report)
-                    await session.commit()
-                    report_id = report.id
-                    
-                    # Count strikes
-                    from sqlalchemy import func
-                    count_q = await session.execute(
-                        select(func.count()).select_from(LeagueReport)
-                        .where(LeagueReport.league_name == league_name)
-                    )
-                    strikes = count_q.scalar() or 1
-
-                # Notify admin via direct message
-                try:
-                    async with async_session() as session:
-                        row = (await session.execute(select(AppConfig).where(AppConfig.key == 'admin_chat_id'))).scalar_one_or_none()
-                        if row:
-                            admin_chat = int(row.value)
-                            kb_buttons = [
-                                [InlineKeyboardButton(text='🛠 Update Match', callback_data='adm_update_match')]
-                            ]
-                            
-                            if strikes >= 3:
-                                kb_buttons.append([InlineKeyboardButton(text='🚫 Blacklist League', callback_data=f"adm_blacklist_report:{report_id}")])
-                                msg_text = f"⚠️ League <b>{league_name}</b> has failed to provide final scores {strikes} times.\n\nYou can manually update the score or blacklist this league."
-                            else:
-                                msg_text = f"⚠️ Score missing for fixture {fixture_id} after 5 attempts. Use <b>Update Match</b> below to resolve it manually."
-                                
-                            kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
-                            await self.bot.send_message(admin_chat, msg_text, reply_markup=kb, parse_mode='HTML')
-                except Exception as e:
-                    logger.error(f"[STEP 4] Failed to notify admin about missing score: {e}")
-
-                logger.critical(f"[STEP 4] Match {match_id} exceeded result fetch retries — report created for {league_name}.")
-                # WE DO NOT RETURN. We fall through so it keeps retrying every 15 mins!
-
-            # Otherwise schedule another retry in 15 minutes
-            self.scheduler.add_job(
-                self.run_step4, "date",
-                run_date=datetime.utcnow() + timedelta(minutes=15),
-                args=[match_id],
-                id=f"retry_step4_{match_id}",
-                replace_existing=True,
-                misfire_grace_time=None,
+            admin_user = await poster._get_admin_username()
+            await poster.post_cancelled_message(self.bot, match, admin_user)
+            
+            await self._update_match(
+                match_id,
+                is_finished=True,
+                skip_reason="match_cancelled_ns_stuck"
             )
+            
+            # Try to pull fresh matches using the auto-sync feature
+            try:
+                from bot.services.scheduler.manager import TimelineScheduler
+                temp_scheduler = TimelineScheduler(self.bot)
+                await temp_scheduler._auto_cache_sync()
+            except Exception as e:
+                logger.error(f"Failed to auto-sync fresh matches after cancel: {e}")
+            return
+
+        
+        # If exactly 5 retries (1h 15m), log a league report and notify admin to manually update
+        if retries + 1 == 5:
+            league_name = getattr(match, 'league_name', 'Unknown League')
+            fixture_id = match.id
+            
+            async with async_session() as session:
+                report = LeagueReport(fixture_id=fixture_id, api_football_league_id=None, league_name=league_name, report_reason='missing_full_time_score')
+                session.add(report)
+                await session.commit()
+                report_id = report.id
+                
+                # Count strikes
+                from sqlalchemy import func
+                count_q = await session.execute(
+                    select(func.count()).select_from(LeagueReport)
+                    .where(LeagueReport.league_name == league_name)
+                )
+                strikes = count_q.scalar() or 1
+
+            # Notify admin via direct message
+            try:
+                async with async_session() as session:
+                    row = (await session.execute(select(AppConfig).where(AppConfig.key == 'admin_chat_id'))).scalar_one_or_none()
+                    if row:
+                        admin_chat = int(row.value)
+                        kb_buttons = [
+                            [InlineKeyboardButton(text='🛠 Update Match', callback_data='adm_update_match')]
+                        ]
+                        
+                        if strikes >= 3:
+                            kb_buttons.append([InlineKeyboardButton(text='🚫 Blacklist League', callback_data=f"adm_blacklist_report:{report_id}")])
+                            msg_text = f"⚠️ League <b>{league_name}</b> has failed to provide final scores {strikes} times.\n\nYou can manually update the score or blacklist this league."
+                        else:
+                            msg_text = f"⚠️ Score missing for fixture {fixture_id} after 5 attempts. Use <b>Update Match</b> below to resolve it manually."
+                            
+                        kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
+                        await self.bot.send_message(admin_chat, msg_text, reply_markup=kb, parse_mode='HTML')
+            except Exception as e:
+                logger.error(f"[STEP 4] Failed to notify admin about missing score: {e}")
+
+            logger.critical(f"[STEP 4] Match {match_id} exceeded result fetch retries — report created for {league_name}.")
+            # WE DO NOT RETURN. We fall through so it keeps retrying every 15 mins!
+
+        # Otherwise schedule another retry in 15 minutes
+        self.scheduler.add_job(
+            self.run_step4, "date",
+            run_date=datetime.utcnow() + timedelta(minutes=15),
+            args=[match_id],
+            id=f"retry_step4_{match_id}",
+            replace_existing=True,
+            misfire_grace_time=None,
+        )
