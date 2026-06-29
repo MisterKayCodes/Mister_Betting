@@ -393,11 +393,69 @@ class TaskRunners:
                 retry_field="step4_retries",
                 retry_fn=self.run_step4,
             )
-        else:
-            logger.warning(
-                f"[STEP 4] Match {match_id} score not ready yet. "
-                "Rescheduling retry in 15 min."
-            )
+            return
+
+        elif result:
+            api_status = result.get("status")
+            api_timestamp = result.get("timestamp")
+            
+            if api_status in ["CANC", "ABD", "AWD", "WO"]:
+                logger.warning(f"[STEP 4] Match {match_id} was Cancelled/Abandoned (status: {api_status}). Marking as cancelled.")
+                admin_user = await poster._get_admin_username()
+                await poster.post_cancelled_message(self.bot, match, admin_user)
+                await self._update_match(match_id, is_finished=True, skip_reason=f"match_cancelled_{api_status}")
+                await self._add_vip_compensation(match_id, f"Match cancelled by API ({api_status})")
+                return
+
+            if api_timestamp:
+                new_kickoff = datetime.utcfromtimestamp(api_timestamp)
+                if match.kickoff_time and new_kickoff > match.kickoff_time + timedelta(minutes=30):
+                    logger.info(f"[STEP 4] Match {match_id} RESCHEDULED to {new_kickoff} UTC. Rebuilding timeline.")
+                    await self._update_match(match_id, kickoff_time=new_kickoff)
+                    
+                    try:
+                        from bot.core.database import AppConfig
+                        async with async_session() as session:
+                            row = (await session.execute(select(AppConfig).where(AppConfig.key == 'channel_id'))).scalar_one_or_none()
+                            channel = row.value if row else None
+                            if channel:
+                                text = (f"⚠️ <b>Match Update</b>\n\n"
+                                        f"The match <b>{match.home_team} vs {match.away_team}</b> has been rescheduled to <b>{new_kickoff.strftime('%H:%M UTC')}</b>.")
+                                await self.bot.send_message(chat_id=channel, text=text, parse_mode='HTML')
+                    except Exception as e:
+                        logger.error(f"[STEP 4] Failed to announce reschedule: {e}")
+                    
+                    # Re-run schedule timeline
+                    import random
+                    k = new_kickoff
+                    t1 = k - timedelta(hours=7)
+                    t2 = k - timedelta(hours=2)
+                    t3 = k - timedelta(hours=1)
+                    t4 = k + timedelta(hours=1, minutes=50) + timedelta(minutes=random.randint(0, 20))
+                    t5 = k + timedelta(hours=2, minutes=30)
+                    now = datetime.utcnow()
+
+                    if not match.preview_posted and t1 > now:
+                        self.scheduler.add_job(self.run_step1, "date", run_date=t1, args=[match_id], id=f"step1_{match_id}", replace_existing=True)
+                    if not match.urgency_posted and t2 > now:
+                        self.scheduler.add_job(self.run_step2, "date", run_date=t2, args=[match_id], id=f"step2_{match_id}", replace_existing=True)
+                    if not match.before_slip_posted and t3 > now:
+                        self.scheduler.add_job(self.run_step3, "date", run_date=t3, args=[match_id], id=f"step3_{match_id}", replace_existing=True)
+                    
+                    self.scheduler.add_job(self.run_step4, "date", run_date=t4, args=[match_id], id=f"step4_{match_id}", replace_existing=True)
+                    self.scheduler.add_job(self.run_step5, "date", run_date=t5, args=[match_id], id=f"step5_{match_id}", replace_existing=True)
+                    
+                    try:
+                        self.scheduler.remove_job(f"retry_step4_{match_id}")
+                    except:
+                        pass
+                    return
+
+        # If it reached here, it's not FT, not Cancelled, and not a future reschedule. Just a regular missing score.
+        logger.warning(
+            f"[STEP 4] Match {match_id} score not ready yet. "
+            "Rescheduling retry in 15 min."
+        )
 
             # Increment per-match result fetch retry counter and record attempt time
             retries = getattr(match, 'result_fetch_retries', 0) or 0

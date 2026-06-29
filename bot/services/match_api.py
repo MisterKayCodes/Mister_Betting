@@ -173,13 +173,15 @@ class MatchDataFetcher:
                 f = resp_data[0]
                 status = f["fixture"]["status"]["short"]
                 goals  = f.get("goals", {})
+                timestamp = f["fixture"].get("timestamp")
                 if status == "FT":
                     return {
                         "status":     "FT",
                         "home_score": goals.get("home", 0),
                         "away_score": goals.get("away", 0),
+                        "timestamp":  timestamp
                     }
-                return {"status": status}  # Still live or not started
+                return {"status": status, "timestamp": timestamp}  # Still live, or cancelled/postponed
 
 
 
