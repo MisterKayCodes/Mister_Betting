@@ -158,7 +158,7 @@ const WonBetSlip = ({ match, isWin }) => {
 
             <div className="won-bet-details">
                 <div className="bet-detail-section">
-                    <div className="match-time">{match.date}, 18:45</div>
+                    <div className="match-time">{match.date}, {match.time}</div>
                     <div className="match-title">{match.homeTeam} v {match.awayTeam}</div>
                     <div className="match-tracker">📈 Match Tracker</div>
                     <div className="ft-score">FT Score {match.homeScore}:{match.awayScore}</div>
