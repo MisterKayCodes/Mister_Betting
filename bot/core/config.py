@@ -11,8 +11,10 @@ ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin_user").lstrip("@").strip().l
 CHANNEL_ID = os.getenv("CHANNEL_ID", "")  # e.g. @mychannel or -100123456789
 
 # Football APIs
-API_FOOTBALL_KEY = os.getenv("API_FOOTBALL_KEY", "")
-ODDS_API_KEY = os.getenv("ODDS_API_KEY", "")
+API_FOOTBALL_KEY  = os.getenv("API_FOOTBALL_KEY", "")
+ODDS_API_KEY      = os.getenv("ODDS_API_KEY", "")
+# Fallback API — used automatically when API-Football is suspended or over-quota
+ALLSPORTS_API_KEY = os.getenv("ALLSPORTS_API_KEY", "")
 
 # Database
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///bot.db")

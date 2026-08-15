@@ -58,6 +58,14 @@ class Match(Base):
     last_result_fetch_attempt = Column(DateTime, nullable=True)
     skip_reason              = Column(String, nullable=True)
 
+    # ── Fallback API bridge ───────────────────────────────────────────────────
+    # Pain: API-Football suspended us silently. We now store the AllSports ID
+    # at sync time so Step 4 has an exact ID ready without guessing by name.
+    allsports_fixture_id = Column(Integer, nullable=True)
+
+    # ── Blacklist flag ───────────────────────────────────────────────────────
+    auto_blacklisted = Column(Boolean, default=False)
+
 
 
 class AppConfig(Base):
@@ -102,6 +110,11 @@ _REQUIRED_COLUMNS = {
     "result_fetch_retries":    "INTEGER DEFAULT 0",
     "last_result_fetch_attempt": "DATETIME",
     "skip_reason":             "TEXT",
+
+    # ── NEW: Fallback API bridge columns ──────────────────────────────────
+    # Stored at sync time so Step 4 never has to guess the AllSports ID later.
+    "allsports_fixture_id":    "INTEGER",
+    "auto_blacklisted":        "BOOLEAN DEFAULT 0",
 }
 
 

@@ -12,6 +12,7 @@ Contract with poster.py:
 """
 from datetime import datetime, timedelta
 from loguru import logger
+from bot.services.match_api import APIAccountSuspendedException
 from bot.services.win_loss_engine import engine
 from bot.services import poster
 
@@ -375,7 +376,45 @@ class TaskRunners:
             return
 
         fetcher = MatchDataFetcher()
-        result = await fetcher.fetch_match_result(match_id)
+        try:
+            # Pass the AllSports fallback ID + team info so fetch_match_result
+            # can use the full 3-step chain: AF → AllSports ID → AllSports blind search.
+            # Pain: without these, if AF is down we have nothing to fall back to.
+            result = await fetcher.fetch_match_result(
+                fixture_id=match_id,
+                allsports_fixture_id=getattr(match, 'allsports_fixture_id', None),
+                home_team=match.home_team,
+                away_team=match.away_team,
+                kickoff_time=match.kickoff_time,
+            )
+        except APIAccountSuspendedException as e:
+            # ── HARD STOP: API account suspended ─ alert admin immediately ──
+            logger.critical(f"[STEP 4] 🚨 API SUSPENDED for match {match_id}. Halting all retries.")
+            try:
+                from bot.core.database import async_session, AppConfig
+                from sqlalchemy import select
+                async with async_session() as session:
+                    row = (await session.execute(
+                        select(AppConfig).where(AppConfig.key == 'admin_chat_id')
+                    )).scalar_one_or_none()
+                    if row:
+                        await self.bot.send_message(
+                            chat_id=int(row.value),
+                            text=(
+                                f"🚨 <b>API-Football Account Suspended</b>\n\n"
+                                f"The bot tried to fetch the result for <b>{match.home_team} vs {match.away_team}</b> "
+                                f"but the API returned a suspension/access error.\n\n"
+                                f"🔴 <b>Error:</b> <code>{e}</code>\n\n"
+                                f"<b>Action required:</b>\n"
+                                f"1. Check your API-Football account at https://dashboard.api-football.com\n"
+                                f"2. Once restored, use /admin → Update Match to manually set the score for this match.\n\n"
+                                f"Match ID: <code>{match_id}</code>"
+                            ),
+                            parse_mode='HTML'
+                        )
+            except Exception as notify_err:
+                logger.error(f"[STEP 4] Failed to send suspension alert to admin: {notify_err}")
+            return  # Do NOT reschedule — retrying won't fix a suspended account
 
         if result and result.get("status") == "FT":
             await self._update_match(

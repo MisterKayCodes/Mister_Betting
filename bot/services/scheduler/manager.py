@@ -6,6 +6,8 @@ from loguru import logger
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from bot.services.scheduler.runners import TaskRunners
+# Quota helpers — track API-Football call count, alert at 80%, reset at midnight
+from bot.services.match_api import sync_af_quota_from_api, reset_af_quota, _af_calls_today, AF_DAILY_LIMIT, AF_WARNING_THRESHOLD
 
 class TimelineScheduler:
     def __init__(self, bot):
@@ -57,17 +59,65 @@ class TimelineScheduler:
             self._clean_old_images, "interval", days=14,
             id="image_cleaner", replace_existing=True
         )
-        # ─── NEW JOB RIGHT HERE  ───
         # Every 5 minutes — Verify if the main loop has frozen
         self.scheduler.add_job(
             self._watchdog_health_check, "interval", minutes=5,
             id="deadlock_watchdog", replace_existing=True
         )
-        # ────────────────────────────────────
-        logger.info("[SCHEDULER] Daily scan, 48h sync, health report, and image cleaner jobs registered.")
+        # API Quota management
+        self.scheduler.add_job(
+            sync_af_quota_from_api, "interval", hours=1,
+            id="quota_sync", replace_existing=True
+        )
+        self.scheduler.add_job(
+            reset_af_quota, "cron", hour=0, minute=0,
+            id="quota_reset", replace_existing=True
+        )
+        self.scheduler.add_job(
+            self._quota_monitor_check, "interval", minutes=30,
+            id="quota_monitor", replace_existing=True
+        )
+        
+        logger.info("[SCHEDULER] Daily scan, 48h sync, health report, image cleaner, and quota jobs registered.")
         
         # ── NEW: Check if DB is empty on startup ──────────────────────────────
         asyncio.create_task(self._check_and_sync_if_empty())
+
+    async def _quota_monitor_check(self):
+        """
+        Runs every 30 minutes. If our API-Football call count hits 80%
+        of the daily limit, alert admin via Telegram so they're not surprised
+        by a suspension mid-match. Pain: we discovered the limit the hard way.
+        """
+        # Re-import to get the current live value (it's a module-level counter)
+        import bot.services.match_api as _api_mod
+        calls = _api_mod._af_calls_today
+
+        if calls >= AF_WARNING_THRESHOLD:
+            logger.warning(f"[QUOTA] ⚠️ API-Football calls: {calls}/{AF_DAILY_LIMIT} today. At 80% threshold.")
+            try:
+                from bot.core.database import async_session, AppConfig
+                from sqlalchemy import select
+                async with async_session() as session:
+                    admin_row = (await session.execute(
+                        select(AppConfig).where(AppConfig.key == "admin_chat_id")
+                    )).scalar_one_or_none()
+                    if admin_row:
+                        await self.bot.send_message(
+                            chat_id=int(admin_row.value),
+                            text=(
+                                f"⚠️ <b>API-Football Quota Warning</b>\n\n"
+                                f"📊 <b>{calls}/{AF_DAILY_LIMIT}</b> calls used today (80% threshold hit).\n\n"
+                                f"✅ All result-fetching has been automatically switched to the "
+                                f"<b>AllSports fallback</b> to protect your remaining quota.\n"
+                                f"Quota resets at <b>midnight UTC</b>."
+                            ),
+                            parse_mode="HTML"
+                        )
+            except Exception as e:
+                logger.error(f"[QUOTA] Failed to notify admin about quota warning: {e}")
+        else:
+            logger.debug(f"[QUOTA] API-Football calls today: {calls}/{AF_DAILY_LIMIT} — within safe range.")
 
     async def _check_and_sync_if_empty(self):
         """
@@ -217,6 +267,21 @@ class TimelineScheduler:
                     )
                     if not exists.scalar_one_or_none():
                         odds = await fetcher.fetch_correct_score_odds(m["id"])
+
+                        # ── Lookup AllSports ID now, while we have the team names ──
+                        # Pain: at result-fetch time, API-Football may be down.
+                        # Storing the AllSports ID upfront gives Step 4 an exact
+                        # fallback ID without a risky blind name-search under pressure.
+                        as_id = await fetcher.find_allsports_fixture_id(
+                            home_team=m["home_team"],
+                            away_team=m["away_team"],
+                            kickoff_date=m["kickoff_time"],
+                        )
+                        if as_id:
+                            logger.success(f"[SYNC] Stored AllSports fallback ID {as_id} for '{m['home_team']} vs {m['away_team']}'")
+                        else:
+                            logger.warning(f"[SYNC] No AllSports fallback ID found for '{m['home_team']} vs {m['away_team']}' — blind search will be used if needed.")
+
                         session.add(Match(
                             id=m["id"],
                             home_team=m["home_team"],
@@ -224,6 +289,7 @@ class TimelineScheduler:
                             league_name=m["league"],
                             kickoff_time=m["kickoff_time"],
                             odds_data=json.dumps(odds),
+                            allsports_fixture_id=as_id,  # None if AllSports doesn't have it
                         ))
                         added += 1
                 await session.commit()
