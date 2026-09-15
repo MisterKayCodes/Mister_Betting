@@ -14,25 +14,78 @@ async def main():
     print("Initializing DB...")
     await init_db()
 
-    # Create a dummy match instance in memory
-    dummy_match = Match(
-        id=999999,
-        home_team="El Nacional",
-        away_team="San Antonio",
-        league_name="Ecuador Serie B",
-        kickoff_time=datetime.utcnow(),
-        real_home_score=2,
-        real_away_score=1,
-        claimed_home_score=2,
-        claimed_away_score=1,
-        is_win=True
-    )
+    now = datetime.utcnow()
 
-    print("\n--- Testing _get_monthly_record_text ---")
-    proof_text = await _get_monthly_record_text(dummy_match)
+    # Inject 5 test matches to simulate a streak and monthly record
+    async with async_session() as session:
+        # Clear existing test dummy matches to avoid primary key conflict
+        from sqlalchemy import delete
+        await session.execute(delete(Match).where(Match.id >= 888000))
+        await session.commit()
+
+        dummy_matches = [
+            Match(
+                id=888001,
+                home_team="Arsenal",
+                away_team="Chelsea",
+                league_name="Premier League",
+                kickoff_time=now,
+                real_home_score=2, real_away_score=1,
+                claimed_home_score=2, claimed_away_score=1,
+                is_finished=True, is_win=True
+            ),
+            Match(
+                id=888002,
+                home_team="Real Madrid",
+                away_team="Barcelona",
+                league_name="La Liga",
+                kickoff_time=now,
+                real_home_score=3, real_away_score=1,
+                claimed_home_score=3, claimed_away_score=1,
+                is_finished=True, is_win=True
+            ),
+            Match(
+                id=888003,
+                home_team="Bayern Munich",
+                away_team="Dortmund",
+                league_name="Bundesliga",
+                kickoff_time=now,
+                real_home_score=1, real_away_score=0,
+                claimed_home_score=1, claimed_away_score=0,
+                is_finished=True, is_win=True
+            ),
+            Match(
+                id=888004,
+                home_team="PSG",
+                away_team="Marseille",
+                league_name="Ligue 1",
+                kickoff_time=now,
+                real_home_score=0, real_away_score=2,
+                claimed_home_score=2, claimed_away_score=1,
+                is_finished=True, is_win=False
+            ),
+            Match(
+                id=888005,
+                home_team="Inter Milan",
+                away_team="Juventus",
+                league_name="Serie A",
+                kickoff_time=now,
+                real_home_score=2, real_away_score=0,
+                claimed_home_score=2, claimed_away_score=0,
+                is_finished=True, is_win=True
+            ),
+        ]
+
+        session.add_all(dummy_matches)
+        await session.commit()
+
+    test_match = dummy_matches[0]  # Arsenal vs Chelsea
+
+    print("\n--- Testing _get_monthly_record_text with 5 injected matches ---")
+    proof_text = await _get_monthly_record_text(test_match)
     print("Generated Proof Block:")
     print(proof_text.encode("utf-8", errors="replace").decode("utf-8"))
-    print("\n✅ Test completed successfully without crashing!")
+    print("\n✅ Test completed successfully!")
 
 if __name__ == "__main__":
     asyncio.run(main())

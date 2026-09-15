@@ -203,7 +203,7 @@ async def post_step4_result(bot: Bot, match) -> int | None:
 async def _get_monthly_record_text(match) -> str:
     """
     Returns a proof-object text block with match prediction vs actual,
-    and current month's W/L record.
+    current month's W/L record, and dynamic winning streak.
     Failsafe: returns empty string if DB query fails so Step 5 NEVER crashes.
     """
     try:
@@ -229,6 +229,22 @@ async def _get_monthly_record_text(match) -> str:
             )
             losses = q_losses.scalar() or 0
 
+            # Dynamic streak calculation from most recent finished matches
+            recent_q = await session.execute(
+                select(Match.is_win)
+                .where(Match.is_win.isnot(None))
+                .order_by(Match.kickoff_time.desc())
+                .limit(20)
+            )
+            recent_outcomes = recent_q.scalars().all()
+
+            streak = 0
+            for is_w in recent_outcomes:
+                if is_w:
+                    streak += 1
+                else:
+                    break
+
         pred_home = match.claimed_home_score if match.claimed_home_score is not None else match.real_home_score
         pred_away = match.claimed_away_score if match.claimed_away_score is not None else match.real_away_score
         pred_str = f"{pred_home} - {pred_away}" if pred_home is not None else "N/A"
@@ -237,11 +253,14 @@ async def _get_monthly_record_text(match) -> str:
         real_away = match.real_away_score if match.real_away_score is not None else "?"
         actual_str = f"{real_home} - {real_away}"
 
+        streak_line = f"\n🔥 <b>Current Streak:</b> {streak} Wins in a row!" if streak >= 2 else ""
+
         proof_block = (
             f"\n\n⚽ <b>{match.home_team} vs {match.away_team}</b>\n"
             f"🎯 <b>Prediction:</b> {pred_str}\n"
             f"🏁 <b>Final Score:</b> {actual_str}\n\n"
             f"📊 <b>{month_str} Record:</b> {wins}W — {losses}L"
+            f"{streak_line}"
         )
         return proof_block
     except Exception as e:
