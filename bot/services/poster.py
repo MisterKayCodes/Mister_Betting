@@ -399,3 +399,72 @@ async def post_postponed_message(bot: Bot, match, admin_user: str) -> None:
         f"DM @{admin_user} for questions."
     )
     await _send_photo(bot, None, text)  # No image, just text
+
+
+async def post_weekly_report(bot: Bot) -> int | None:
+    """
+    Generates and posts a text-based weekly recap to the Telegram channel.
+    Queries the database for matches in the last 7 days.
+    """
+    logger.info("[WEEKLY REPORT] Generating weekly performance recap...")
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    seven_days_ago = now - timedelta(days=7)
+    month_str = now.strftime("%B")
+    year_month = now.strftime("%Y-%m")
+
+    try:
+        async with async_session() as session:
+            # Get finished matches in the last 7 days
+            q_recent = await session.execute(
+                select(Match).where(
+                    Match.is_finished == True,
+                    Match.kickoff_time >= seven_days_ago
+                ).order_by(Match.kickoff_time.asc())
+            )
+            weekly_matches = q_recent.scalars().all()
+
+            # Monthly wins/losses for context
+            q_wins = await session.execute(
+                select(func.count(Match.id)).where(
+                    Match.is_win == True,
+                    func.strftime('%Y-%m', Match.kickoff_time) == year_month
+                )
+            )
+            monthly_wins = q_wins.scalar() or 0
+
+            q_losses = await session.execute(
+                select(func.count(Match.id)).where(
+                    Match.is_win == False,
+                    func.strftime('%Y-%m', Match.kickoff_time) == year_month
+                )
+            )
+            monthly_losses = q_losses.scalar() or 0
+
+        w_count = sum(1 for m in weekly_matches if m.is_win)
+        l_count = sum(1 for m in weekly_matches if m.is_win is False)
+
+        lines = []
+        for m in weekly_matches:
+            status_icon = "Won ✅" if m.is_win else "Lost ❌"
+            r_home = m.real_home_score if m.real_home_score is not None else "?"
+            r_away = m.real_away_score if m.real_away_score is not None else "?"
+            lines.append(f"⚽ {m.home_team} vs {m.away_team} — {r_home}-{r_away} ({status_icon})")
+
+        matches_text = "\n".join(lines) if lines else "<i>No finished matches recorded this week.</i>"
+        admin_user = await _get_admin_username()
+
+        report_text = (
+            f"📊 <b>WEEKLY VIP RECAP</b> 📊\n\n"
+            f"What a week for the VIP family! Here is how our selections performed over the last 7 days:\n\n"
+            f"{matches_text}\n\n"
+            f"📈 <b>Weekly Record:</b> {w_count}W — {l_count}L\n"
+            f"🔥 <b>{month_str} Record:</b> {monthly_wins}W — {monthly_losses}L\n\n"
+            f"Another profitable run in the books. Don't sit on the sidelines for the next one.\n"
+            f"DM @{admin_user} to join VIP! 💸"
+        )
+
+        return await _send_photo(bot, None, report_text)
+    except Exception as e:
+        logger.error(f"[WEEKLY REPORT] Failed to generate report: {e}")
+        return None

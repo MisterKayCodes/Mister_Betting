@@ -61,6 +61,16 @@ async def admin_callbacks(cb: CallbackQuery):
         await _handle_update_match(cb)
     elif data.startswith("adm_cancel_match:"):
         await _handle_cancel_match_admin(cb, data)
+    elif data == "adm_weekly_report":
+        await _handle_weekly_report(cb)
+    elif data == "adm_post_weekly_now":
+        await _handle_post_weekly_now(cb)
+    elif data == "adm_set_weekly_day_menu":
+        await _handle_set_weekly_day_menu(cb)
+    elif data.startswith("adm_set_weekly_day:"):
+        await _handle_set_weekly_day(cb, data)
+    elif data == "adm_set_weekly_time":
+        await _handle_set_weekly_time(cb)
 
 
 async def _handle_status(cb: CallbackQuery):
@@ -503,6 +513,8 @@ async def handle_text_replies(message: types.Message):
         await _handle_match_input(message)
     elif pending == "vip_price":
         await _handle_vip_price_input(message)
+    elif pending == "weekly_time":
+        await _handle_weekly_time_input(message)
     elif isinstance(pending, dict) and pending.get("type") == "score_update":
         await _handle_score_input(message, pending["match_id"])
 
@@ -824,3 +836,139 @@ async def _handle_score_input(message: types.Message, match_id: int):
             f"The score has been saved in the database. You may need to restart or re-trigger manually.",
             parse_mode="HTML"
         )
+
+
+async def _handle_weekly_report(cb: CallbackQuery):
+    """Show Weekly Report configuration screen"""
+    from bot.core.database import async_session, AppConfig
+    from sqlalchemy import select
+
+    async with async_session() as session:
+        q_day = await session.execute(select(AppConfig).where(AppConfig.key == "weekly_report_day"))
+        row_day = q_day.scalar_one_or_none()
+        day_str = (row_day.value if row_day else "sunday").capitalize()
+
+        q_time = await session.execute(select(AppConfig).where(AppConfig.key == "weekly_report_time"))
+        row_time = q_time.scalar_one_or_none()
+        time_str = row_time.value if row_time else "20:00"
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="▶️ Post Recap Now", callback_data="adm_post_weekly_now")],
+        [InlineKeyboardButton(text="📅 Change Day", callback_data="adm_set_weekly_day_menu"),
+         InlineKeyboardButton(text="⏰ Change Time", callback_data="adm_set_weekly_time")],
+        [InlineKeyboardButton(text="🔙 Back", callback_data="adm_status")]
+    ])
+
+    await cb.message.edit_text(
+        f"📊 <b>Weekly Report Settings</b>\n\n"
+        f"🗓 <b>Scheduled Day:</b> Every {day_str}\n"
+        f"⏰ <b>Scheduled Time:</b> {time_str} UTC\n\n"
+        f"Tap below to trigger the weekly recap post immediately or adjust the schedule.",
+        reply_markup=kb,
+        parse_mode="HTML"
+    )
+    await cb.answer()
+
+
+async def _handle_post_weekly_now(cb: CallbackQuery):
+    """Trigger the weekly report post immediately"""
+    from bot.services import poster
+    await cb.answer("⏳ Generating weekly recap...", show_alert=False)
+    res = await poster.post_weekly_report(cb.bot)
+    if res:
+        await cb.message.answer(f"✅ <b>Weekly VIP Recap posted to channel!</b> (Message ID: {res})", parse_mode="HTML")
+    else:
+        await cb.message.answer("❌ Failed to post weekly report. Check logs for details.")
+
+
+async def _handle_set_weekly_day_menu(cb: CallbackQuery):
+    """Show day selector buttons"""
+    days = [
+        ("Monday", "monday"), ("Tuesday", "tuesday"), ("Wednesday", "wednesday"),
+        ("Thursday", "thursday"), ("Friday", "friday"), ("Saturday", "saturday"),
+        ("Sunday", "sunday")
+    ]
+    rows = []
+    for label, val in days:
+        rows.append([InlineKeyboardButton(text=label, callback_data=f"adm_set_weekly_day:{val}")])
+    rows.append([InlineKeyboardButton(text="🔙 Back", callback_data="adm_weekly_report")])
+
+    await cb.message.edit_text(
+        "📅 <b>Select Day for Weekly Report:</b>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        parse_mode="HTML"
+    )
+    await cb.answer()
+
+
+async def _handle_set_weekly_day(cb: CallbackQuery, data: str):
+    """Save selected day to AppConfig and reschedule"""
+    day_val = data.split(":")[-1]
+    from bot.core.database import async_session, AppConfig
+    from sqlalchemy import select
+
+    async with async_session() as session:
+        q = await session.execute(select(AppConfig).where(AppConfig.key == "weekly_report_day"))
+        row = q.scalar_one_or_none()
+        if row:
+            row.value = day_val
+        else:
+            session.add(AppConfig(key="weekly_report_day", value=day_val))
+        await session.commit()
+
+    try:
+        from bot.services.scheduler.manager import TimelineScheduler
+        temp_sched = TimelineScheduler(cb.bot)
+        await temp_sched.schedule_weekly_report_job()
+    except Exception as e:
+        logger.warning(f"[ADMIN] Could not refresh scheduler job immediately: {e}")
+
+    await cb.answer(f"Day updated to {day_val.capitalize()}!", show_alert=True)
+    await _handle_weekly_report(cb)
+
+
+async def _handle_set_weekly_time(cb: CallbackQuery):
+    """Prompt admin for time input"""
+    _pending_set[cb.from_user.id] = "weekly_time"
+    await cb.message.answer(
+        "⏰ <b>Set Weekly Report Time</b>\n\n"
+        "Please reply with the time in 24-hour UTC format, e.g. <code>20:00</code> or <code>09:30</code>",
+        parse_mode="HTML"
+    )
+    await cb.answer()
+
+
+async def _handle_weekly_time_input(message: types.Message):
+    """Save time to AppConfig and reschedule"""
+    text = message.text.strip()
+    try:
+        parts = text.split(":")
+        h, m = int(parts[0]), int(parts[1])
+        if not (0 <= h <= 23 and 0 <= m <= 59):
+            raise ValueError()
+        formatted_time = f"{h:02d}:{m:02d}"
+    except Exception:
+        await message.answer("❌ Invalid format. Please reply with a valid 24h time like <code>20:00</code>", parse_mode="HTML")
+        _pending_set[message.from_user.id] = "weekly_time"
+        return
+
+    from bot.core.database import async_session, AppConfig
+    from sqlalchemy import select
+
+    async with async_session() as session:
+        q = await session.execute(select(AppConfig).where(AppConfig.key == "weekly_report_time"))
+        row = q.scalar_one_or_none()
+        if row:
+            row.value = formatted_time
+        else:
+            session.add(AppConfig(key="weekly_report_time", value=formatted_time))
+        await session.commit()
+
+    try:
+        from bot.services.scheduler.manager import TimelineScheduler
+        temp_sched = TimelineScheduler(message.bot)
+        await temp_sched.schedule_weekly_report_job()
+    except Exception as e:
+        logger.warning(f"[ADMIN] Could not refresh scheduler job immediately: {e}")
+
+    await message.answer(f"✅ <b>Weekly Report time set to {formatted_time} UTC</b>", parse_mode="HTML")

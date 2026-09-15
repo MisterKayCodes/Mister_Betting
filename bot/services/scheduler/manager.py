@@ -78,10 +78,52 @@ class TimelineScheduler:
             id="quota_monitor", replace_existing=True
         )
         
-        logger.info("[SCHEDULER] Daily scan, 48h sync, health report, image cleaner, and quota jobs registered.")
-        
+        # Weekly performance report (dynamic cron from DB)
+        asyncio.create_task(self.schedule_weekly_report_job())
+
         # ── NEW: Check if DB is empty on startup ──────────────────────────────
         asyncio.create_task(self._check_and_sync_if_empty())
+
+    async def schedule_weekly_report_job(self):
+        """Register or update the weekly report job dynamically from AppConfig."""
+        from bot.core.database import async_session, AppConfig
+        from sqlalchemy import select
+        from apscheduler.triggers.cron import CronTrigger
+        from bot.services import poster
+
+        day_map = {
+            "monday": 0, "tuesday": 1, "wednesday": 2,
+            "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6
+        }
+
+        async with async_session() as session:
+            q_day = await session.execute(select(AppConfig).where(AppConfig.key == "weekly_report_day"))
+            row_day = q_day.scalar_one_or_none()
+            day_str = (row_day.value if row_day else "sunday").strip().lower()
+
+            q_time = await session.execute(select(AppConfig).where(AppConfig.key == "weekly_report_time"))
+            row_time = q_time.scalar_one_or_none()
+            time_str = (row_time.value if row_time else "20:00").strip()
+
+        try:
+            hour_str, min_str = time_str.split(":")
+            hour = int(hour_str)
+            minute = int(min_str)
+        except Exception:
+            hour, minute = 20, 0
+
+        day_of_week = day_map.get(day_str, 6)
+
+        trigger = CronTrigger(day_of_week=day_of_week, hour=hour, minute=minute)
+        self.scheduler.add_job(
+            poster.post_weekly_report,
+            trigger,
+            args=[self.bot],
+            id="weekly_report",
+            replace_existing=True,
+            misfire_grace_time=None
+        )
+        logger.info(f"[SCHEDULER] Weekly report scheduled for {day_str.capitalize()}s at {hour:02d}:{minute:02d} UTC")
 
     async def _quota_monitor_check(self):
         """

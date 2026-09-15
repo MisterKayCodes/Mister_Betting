@@ -37,6 +37,7 @@ def main_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🛠 Update Match",      callback_data="adm_update_match")],
         [InlineKeyboardButton(text="🔄 Sync Matches Now",  callback_data="adm_sync_now"),
          InlineKeyboardButton(text="🗑 Clear All Matches", callback_data="adm_clear_db")],
-        [InlineKeyboardButton(text="📅 View Jobs",         callback_data="adm_view_jobs")],
+        [InlineKeyboardButton(text="📅 View Jobs",         callback_data="adm_view_jobs"),
+         InlineKeyboardButton(text="📈 Weekly Report",     callback_data="adm_weekly_report")],
         [InlineKeyboardButton(text="📋 Manage Whitelist",  callback_data="adm_manage_whitelist")],
     ])
