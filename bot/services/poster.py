@@ -107,8 +107,40 @@ async def _send_photo(bot: Bot, image_path: str, caption: str) -> int | None:
 
 # ── Payload builder ──────────────────────────────────────────────────────────
 
-def _build_match_data(match, is_win: bool = None, hide_odds: bool = False,
-                      is_finished: bool = False, admin_user: str | None = None) -> dict:
+async def _get_flip_caption_header() -> str:
+    """Returns the 7-Day Flip header block if campaign is currently active."""
+    try:
+        from bot.core.database import AppConfig
+        async with async_session() as session:
+            q_active = await session.execute(select(AppConfig).where(AppConfig.key == "flip_active"))
+            row_active = q_active.scalar_one_or_none()
+            if not row_active or row_active.value.lower() != "true":
+                return ""
+
+            q_day = await session.execute(select(AppConfig).where(AppConfig.key == "flip_day"))
+            row_day = q_day.scalar_one_or_none()
+            day = int(row_day.value) if row_day else 1
+
+            q_bankroll = await session.execute(select(AppConfig).where(AppConfig.key == "flip_bankroll"))
+            row_bankroll = q_bankroll.scalar_one_or_none()
+            bankroll = float(row_bankroll.value) if row_bankroll else 10.0
+
+            stake = round(bankroll * 0.5, 2)
+            if stake <= 0:
+                stake = 5.0
+
+            return (
+                f"🔄 <b>7-DAY FLIP CHALLENGE (Day {day}/7)</b>\n"
+                f"💰 <b>Current Bankroll:</b> ${bankroll:.2f}\n"
+                f"🎯 <b>Today's Stake (50%):</b> ${stake:.2f}\n\n"
+            )
+    except Exception as e:
+        logger.warning(f"[POSTER] Failed to build flip header: {e}")
+        return ""
+
+
+async def _build_match_data(match, is_win: bool = None, hide_odds: bool = False,
+                            is_finished: bool = False, admin_user: str | None = None) -> dict:
     """Builds the BOT_DATA payload injected into the React UI."""
     odds_map = json.loads(match.odds_data) if match.odds_data else {}
 
@@ -120,7 +152,29 @@ def _build_match_data(match, is_win: bool = None, hide_odds: bool = False,
         claimed_key = real_score_key
 
     claimed_odds = odds_map.get(claimed_key) or odds_map.get(real_score_key) or 12.00
-    payout = round(200.00 * claimed_odds, 2)
+
+    stake = 200.00
+    payout = round(stake * claimed_odds, 2)
+    balance = float(ui.get_fluctuating_balance().replace(",", ""))
+
+    # Check if 7-Day Flip campaign is active
+    try:
+        from bot.core.database import AppConfig
+        async with async_session() as session:
+            q_active = await session.execute(select(AppConfig).where(AppConfig.key == "flip_active"))
+            row_active = q_active.scalar_one_or_none()
+            if row_active and row_active.value.lower() == "true":
+                q_bankroll = await session.execute(select(AppConfig).where(AppConfig.key == "flip_bankroll"))
+                row_bankroll = q_bankroll.scalar_one_or_none()
+                bankroll = float(row_bankroll.value) if row_bankroll else 10.0
+
+                stake = round(bankroll * 0.5, 2)
+                if stake <= 0:
+                    stake = 5.0
+                payout = round(stake * claimed_odds, 2)
+                balance = round(bankroll - stake, 2)
+    except Exception as e:
+        logger.warning(f"[POSTER] Failed to apply flip data to match payload: {e}")
 
     return {
         "league":           match.league_name,
@@ -134,10 +188,10 @@ def _build_match_data(match, is_win: bool = None, hide_odds: bool = False,
         "awayScore":        match.real_away_score if is_finished else None,
         "claimedHomeScore": match.claimed_home_score,
         "claimedAwayScore": match.claimed_away_score,
-        "stake":            200.00,
+        "stake":            stake,
         "odds":             claimed_odds,
         "payout":           payout,
-        "balance":          float(ui.get_fluctuating_balance().replace(",", "")),
+        "balance":          balance,
         "cashout":          float(ui.get_fluctuating_cashout().replace(",", "")),
         "adminUser":        admin_user or ADMIN_USERNAME,
         "hideOdds":         hide_odds,
@@ -162,45 +216,49 @@ async def _get_admin_username() -> str | None:
 async def post_step1_preview(bot: Bot, match) -> int | None:
     logger.info(f"[STEP 1] Generating preview card for match {match.id}")
     admin_user = await _get_admin_username()
-    data = _build_match_data(match, admin_user=admin_user)
+    data = await _build_match_data(match, admin_user=admin_user)
     img_path = await image_gen.generate_image(
         "preview-before", data, f"match_{match.id}_step1_preview.png"
     )
     caption = await get_caption("preview", admin_user)
-    return await _send_photo(bot, img_path, caption)
+    flip_hdr = await _get_flip_caption_header()
+    return await _send_photo(bot, img_path, f"{flip_hdr}{caption}")
 
 
 async def post_step2_urgency(bot: Bot, match) -> int | None:
     logger.info(f"[STEP 2] Generating urgency post for match {match.id}")
     admin_user = await _get_admin_username()
-    data = _build_match_data(match, admin_user=admin_user)
+    data = await _build_match_data(match, admin_user=admin_user)
     img_path = await image_gen.generate_image(
         "preview-before", data, f"match_{match.id}_step2_urgency.png"
     )
     caption = await get_caption("urgency", admin_user)
-    return await _send_photo(bot, img_path, caption)
+    flip_hdr = await _get_flip_caption_header()
+    return await _send_photo(bot, img_path, f"{flip_hdr}{caption}")
 
 
 async def post_step3_black_box(bot: Bot, match) -> int | None:
     logger.info(f"[STEP 3] Generating black-box slip for match {match.id}")
     admin_user = await _get_admin_username()
-    data = _build_match_data(match, hide_odds=True, admin_user=admin_user)
+    data = await _build_match_data(match, hide_odds=True, admin_user=admin_user)
     img_path = await image_gen.generate_image(
         "slip-before", data, f"match_{match.id}_step3_blackbox.png"
     )
     caption = await get_caption("black_box", admin_user)
-    return await _send_photo(bot, img_path, caption)
+    flip_hdr = await _get_flip_caption_header()
+    return await _send_photo(bot, img_path, f"{flip_hdr}{caption}")
 
 
 async def post_step4_result(bot: Bot, match) -> int | None:
     logger.info(f"[STEP 4] Generating result preview for match {match.id}")
     admin_user = await _get_admin_username()
-    data = _build_match_data(match, is_finished=True, admin_user=admin_user)
+    data = await _build_match_data(match, is_finished=True, admin_user=admin_user)
     img_path = await image_gen.generate_image(
         "preview-after", data, f"match_{match.id}_step4_result.png"
     )
     caption = await get_caption("result", admin_user)
-    return await _send_photo(bot, img_path, caption)
+    flip_hdr = await _get_flip_caption_header()
+    return await _send_photo(bot, img_path, f"{flip_hdr}{caption}")
 
 
 async def _get_monthly_record_text(match) -> str:
@@ -275,7 +333,7 @@ async def post_step5_final_slip(bot: Bot, match, is_win: bool) -> int | None:
     logger.info(f"[STEP 5] Generating final slip for match {match.id} — {'WIN' if is_win else 'LOSS'}")
     view = "slip-won" if is_win else "slip-lost"
     admin_user = await _get_admin_username()
-    data = _build_match_data(match, is_win=is_win, is_finished=True, admin_user=admin_user)
+    data = await _build_match_data(match, is_win=is_win, is_finished=True, admin_user=admin_user)
     img_path = await image_gen.generate_image(
         view, data, f"match_{match.id}_step5_{'win' if is_win else 'loss'}.png"
     )
@@ -286,7 +344,25 @@ async def post_step5_final_slip(bot: Bot, match, is_win: bool) -> int | None:
     if record_text:
         caption = f"{caption}{record_text}"
 
-    return await _send_photo(bot, img_path, caption)
+    flip_hdr = await _get_flip_caption_header()
+    return await _send_photo(bot, img_path, f"{flip_hdr}{caption}")
+
+
+async def post_flip_completed_celebration(bot: Bot, final_bankroll: float) -> int | None:
+    """
+    Celebration post triggered when Day 7 of the Flip Challenge is completed successfully.
+    """
+    admin_user = await _get_admin_username()
+    text = (
+        f"🚨 <b>7-DAY FLIP CHALLENGE COMPLETED!</b> 🚨\n\n"
+        f"🏆 <b>Final Bankroll:</b> ${final_bankroll:.2f}\n\n"
+        f"We started with just <b>$10.00</b> and turned it into <b>${final_bankroll:.2f}</b> "
+        f"live in front of your eyes over the last 7 days!\n\n"
+        f"This is the power of high-winrate VIP selections paired with strict bankroll management.\n\n"
+        f"Stop watching from the sidelines! The next flip starts soon.\n\n"
+        f"DM @{admin_user} to lock in your VIP spot now! 💸"
+    )
+    return await _send_photo(bot, None, text)
 
 
 async def post_step6_testimonial(bot: Bot, match) -> int | None:

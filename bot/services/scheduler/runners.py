@@ -293,19 +293,73 @@ class TaskRunners:
             is_win=is_win,
         )
 
-        # ── Step 6 Scheduler (WIN only follow-up) ───────────────────────────
+        # ── Step 6 Scheduler & 7-Day Flip Progression ───────────────────────
         updated_match = await self._load_match(match_id)
-        if updated_match and updated_match.final_slip_posted and is_win:
-            step6_time = datetime.utcnow() + timedelta(minutes=30)
-            self.scheduler.add_job(
-                self.run_step6, "date",
-                run_date=step6_time,
-                args=[match_id],
-                id=f"step6_{match_id}",
-                replace_existing=True,
-                misfire_grace_time=None,
-            )
-            logger.info(f"[STEP 5] WIN confirmed — Scheduled Step 6 (Testimonial) for match {match_id} at {step6_time}")
+        if updated_match and updated_match.final_slip_posted:
+            if is_win:
+                step6_time = datetime.utcnow() + timedelta(minutes=30)
+                self.scheduler.add_job(
+                    self.run_step6, "date",
+                    run_date=step6_time,
+                    args=[match_id],
+                    id=f"step6_{match_id}",
+                    replace_existing=True,
+                    misfire_grace_time=None,
+                )
+                logger.info(f"[STEP 5] WIN confirmed — Scheduled Step 6 (Testimonial) for match {match_id} at {step6_time}")
+
+            # ── 7-Day Flip Progression ──
+            try:
+                import json
+                from bot.core.database import async_session, AppConfig
+                from sqlalchemy import select
+
+                async with async_session() as session:
+                    q_active = await session.execute(select(AppConfig).where(AppConfig.key == "flip_active"))
+                    row_active = q_active.scalar_one_or_none()
+                    if row_active and row_active.value.lower() == "true":
+                        q_day = await session.execute(select(AppConfig).where(AppConfig.key == "flip_day"))
+                        row_day = q_day.scalar_one_or_none()
+                        day = int(row_day.value) if row_day else 1
+
+                        q_bankroll = await session.execute(select(AppConfig).where(AppConfig.key == "flip_bankroll"))
+                        row_bankroll = q_bankroll.scalar_one_or_none()
+                        bankroll = float(row_bankroll.value) if row_bankroll else 10.0
+
+                        stake = round(bankroll * 0.5, 2)
+                        odds_map = json.loads(match.odds_data) if match.odds_data else {}
+                        claimed_key = f"{match.claimed_home_score}-{match.claimed_away_score}" if match.claimed_home_score is not None else f"{match.real_home_score}-{match.real_away_score}"
+                        claimed_odds = odds_map.get(claimed_key) or 12.00
+
+                        if is_win:
+                            profit = round(stake * claimed_odds, 2) - stake
+                            new_bankroll = round(bankroll + profit, 2)
+                        else:
+                            new_bankroll = round(max(0.0, bankroll - stake), 2)
+
+                        next_day = day + 1
+
+                        if next_day > 7:
+                            row_active.value = "false"
+                            await session.commit()
+                            logger.info(f"[FLIP] 7-Day Flip Challenge completed! Final Bankroll: ${new_bankroll:.2f}")
+                            if is_win:
+                                await poster.post_flip_completed_celebration(self.bot, new_bankroll)
+                        else:
+                            if row_day:
+                                row_day.value = str(next_day)
+                            else:
+                                session.add(AppConfig(key="flip_day", value=str(next_day)))
+
+                            if row_bankroll:
+                                row_bankroll.value = str(new_bankroll)
+                            else:
+                                session.add(AppConfig(key="flip_bankroll", value=str(new_bankroll)))
+
+                            await session.commit()
+                            logger.info(f"[FLIP] Day {day} finished ({'WIN' if is_win else 'LOSS'}). Next: Day {next_day}, Bankroll: ${new_bankroll:.2f}")
+            except Exception as e:
+                logger.error(f"[FLIP] Error updating 7-day flip progression: {e}")
 
     async def run_step6(self, match_id: int):
         """

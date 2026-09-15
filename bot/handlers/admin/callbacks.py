@@ -71,6 +71,14 @@ async def admin_callbacks(cb: CallbackQuery):
         await _handle_set_weekly_day(cb, data)
     elif data == "adm_set_weekly_time":
         await _handle_set_weekly_time(cb)
+    elif data == "adm_flip_campaign":
+        await _handle_flip_campaign(cb)
+    elif data == "adm_start_flip":
+        await _handle_start_flip(cb)
+    elif data == "adm_stop_flip":
+        await _handle_stop_flip(cb)
+    elif data == "adm_set_flip_bankroll":
+        await _handle_set_flip_bankroll(cb)
 
 
 async def _handle_status(cb: CallbackQuery):
@@ -515,6 +523,8 @@ async def handle_text_replies(message: types.Message):
         await _handle_vip_price_input(message)
     elif pending == "weekly_time":
         await _handle_weekly_time_input(message)
+    elif pending == "flip_bankroll":
+        await _handle_flip_bankroll_input(message)
     elif isinstance(pending, dict) and pending.get("type") == "score_update":
         await _handle_score_input(message, pending["match_id"])
 
@@ -972,3 +982,122 @@ async def _handle_weekly_time_input(message: types.Message):
         logger.warning(f"[ADMIN] Could not refresh scheduler job immediately: {e}")
 
     await message.answer(f"✅ <b>Weekly Report time set to {formatted_time} UTC</b>", parse_mode="HTML")
+
+
+async def _handle_flip_campaign(cb: CallbackQuery):
+    """Show 7-Day Flip Campaign management screen"""
+    from bot.core.database import async_session, AppConfig
+    from sqlalchemy import select
+
+    async with async_session() as session:
+        q_active = await session.execute(select(AppConfig).where(AppConfig.key == "flip_active"))
+        row_active = q_active.scalar_one_or_none()
+        is_active = (row_active.value.lower() == "true") if row_active else False
+
+        q_day = await session.execute(select(AppConfig).where(AppConfig.key == "flip_day"))
+        row_day = q_day.scalar_one_or_none()
+        day = int(row_day.value) if row_day else 1
+
+        q_bankroll = await session.execute(select(AppConfig).where(AppConfig.key == "flip_bankroll"))
+        row_bankroll = q_bankroll.scalar_one_or_none()
+        bankroll = float(row_bankroll.value) if row_bankroll else 10.0
+
+    status_icon = "🟢 ACTIVE" if is_active else "🔴 INACTIVE"
+    stake = round(bankroll * 0.5, 2)
+
+    buttons = []
+    if is_active:
+        buttons.append([InlineKeyboardButton(text="⏹ Stop Flip Campaign", callback_data="adm_stop_flip")])
+    else:
+        buttons.append([InlineKeyboardButton(text="🚀 Start 7-Day Flip ($10)", callback_data="adm_start_flip")])
+
+    buttons.append([InlineKeyboardButton(text="✏️ Edit Current Bankroll", callback_data="adm_set_flip_bankroll")])
+    buttons.append([InlineKeyboardButton(text="🔙 Back", callback_data="adm_status")])
+
+    await cb.message.edit_text(
+        f"🔄 <b>7-Day Flip Campaign Control</b>\n\n"
+        f"📊 <b>Status:</b> {status_icon}\n"
+        f"🗓 <b>Progress:</b> Day {day} of 7\n"
+        f"💰 <b>Current Bankroll:</b> ${bankroll:.2f}\n"
+        f"🎯 <b>Next Stake (50%):</b> ${stake:.2f}\n\n"
+        f"When active, all match posts and generated betting slip images will automatically "
+        f"override default stakes to showcase the $10 compounding journey!",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        parse_mode="HTML"
+    )
+    await cb.answer()
+
+
+async def _handle_start_flip(cb: CallbackQuery):
+    """Start/restart the 7-Day Flip Campaign with $10 default"""
+    from bot.core.database import async_session, AppConfig
+    from sqlalchemy import select
+
+    async with async_session() as session:
+        for key, val in [("flip_active", "true"), ("flip_day", "1"), ("flip_bankroll", "10.0")]:
+            q = await session.execute(select(AppConfig).where(AppConfig.key == key))
+            row = q.scalar_one_or_none()
+            if row:
+                row.value = val
+            else:
+                session.add(AppConfig(key=key, value=val))
+        await session.commit()
+
+    await cb.answer("🚀 7-Day Flip Campaign Started at Day 1 ($10.00)!", show_alert=True)
+    await _handle_flip_campaign(cb)
+
+
+async def _handle_stop_flip(cb: CallbackQuery):
+    """Stop the 7-Day Flip Campaign"""
+    from bot.core.database import async_session, AppConfig
+    from sqlalchemy import select
+
+    async with async_session() as session:
+        q = await session.execute(select(AppConfig).where(AppConfig.key == "flip_active"))
+        row = q.scalar_one_or_none()
+        if row:
+            row.value = "false"
+        else:
+            session.add(AppConfig(key="flip_active", value="false"))
+        await session.commit()
+
+    await cb.answer("⏹ 7-Day Flip Campaign Stopped.", show_alert=True)
+    await _handle_flip_campaign(cb)
+
+
+async def _handle_set_flip_bankroll(cb: CallbackQuery):
+    """Prompt admin to enter bankroll amount"""
+    _pending_set[cb.from_user.id] = "flip_bankroll"
+    await cb.message.answer(
+        "✏️ <b>Edit Flip Bankroll</b>\n\n"
+        "Reply with the new bankroll amount (e.g. <code>25.50</code> or <code>10</code>)",
+        parse_mode="HTML"
+    )
+    await cb.answer()
+
+
+async def _handle_flip_bankroll_input(message: types.Message):
+    """Save manually edited bankroll to DB"""
+    text = message.text.strip()
+    try:
+        val = float(text)
+        if val < 0:
+            raise ValueError()
+    except Exception:
+        await message.answer("❌ Please reply with a valid number (e.g. <code>25.50</code>)", parse_mode="HTML")
+        _pending_set[message.from_user.id] = "flip_bankroll"
+        return
+
+    from bot.core.database import async_session, AppConfig
+    from sqlalchemy import select
+
+    async with async_session() as session:
+        q = await session.execute(select(AppConfig).where(AppConfig.key == "flip_bankroll"))
+        row = q.scalar_one_or_none()
+        if row:
+            row.value = str(val)
+        else:
+            session.add(AppConfig(key="flip_bankroll", value=str(val)))
+        await session.commit()
+
+    await message.answer(f"✅ <b>Flip bankroll updated to ${val:.2f}</b>", parse_mode="HTML")
