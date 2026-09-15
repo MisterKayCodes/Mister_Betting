@@ -164,9 +164,15 @@ class TimelineScheduler:
     async def _check_and_sync_if_empty(self):
         """
         Check if database has any matches on startup.
-        If completely empty, trigger immediate auto-sync.
+        If completely empty, trigger immediate auto-sync. Also sync AF quota from server on startup.
         """
         await asyncio.sleep(5)  # Wait for bot to fully initialize
+        try:
+            from bot.services.match_api import sync_af_quota_from_api
+            await sync_af_quota_from_api()
+        except Exception as e:
+            logger.warning(f"[QUOTA] Initial server quota sync failed: {e}")
+
         unposted_count = await self._count_unposted_matches()
         
         if unposted_count == 0:

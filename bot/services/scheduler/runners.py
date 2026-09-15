@@ -228,7 +228,44 @@ class TaskRunners:
         # ── SAFETY CHECK: Don't post without real score ─────────────────────
         if not match.is_finished or match.real_home_score is None:
             retries = getattr(match, 'step5_retries', 0) or 0
-            # Wait up to 24 retries (24 * 10 mins = 4 hours) for the score
+            now = datetime.utcnow()
+            expected_ft = match.kickoff_time + timedelta(hours=2, minutes=30)
+
+            # Hard stop: If game kicked off over 2h 30m ago and score is still missing
+            if now > expected_ft:
+                logger.critical(
+                    f"[STEP 5] 🔴 HARD ERROR: Match {match_id} ({match.home_team} vs {match.away_team}) "
+                    f"stuck past expected fulltime. Freezing retries and alerting admin."
+                )
+                try:
+                    from bot.core.database import async_session, AppConfig
+                    from sqlalchemy import select
+                    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+                    async with async_session() as session:
+                        r = await session.execute(select(AppConfig).where(AppConfig.key == "admin_chat_id"))
+                        row = r.scalar_one_or_none()
+                        if row:
+                            admin_chat_id = int(row.value)
+                            kb = InlineKeyboardMarkup(inline_keyboard=[
+                                [InlineKeyboardButton(text="✏️ Enter Score", callback_data="adm_update_match")],
+                                [InlineKeyboardButton(text="❌ Cancel Match", callback_data=f"adm_cancel_match:{match.id}")]
+                            ])
+                            await self.bot.send_message(
+                                admin_chat_id,
+                                f"🔴 <b>HARD ERROR — Match Stuck After Full-Time</b>\n\n"
+                                f"🏟 <b>{match.home_team}</b> vs <b>{match.away_team}</b>\n"
+                                f"🏆 {match.league_name}\n"
+                                f"⏱ Kickoff: {match.kickoff_time.strftime('%H:%M UTC')} (over 2h 30m ago)\n"
+                                f"🔢 Retries attempted: {retries}\n\n"
+                                f"API score is missing. Match is frozen. Please choose an action below:",
+                                parse_mode="HTML",
+                                reply_markup=kb
+                            )
+                except Exception as e:
+                    logger.error(f"[STEP 5] Could not send interactive alert to admin: {e}")
+                return
+
+            # Normal retry under 2h30m mark
             if retries + 1 < 24:
                 retry_at = datetime.utcnow() + timedelta(minutes=RETRY_INTERVAL_MINUTES)
                 self.scheduler.add_job(

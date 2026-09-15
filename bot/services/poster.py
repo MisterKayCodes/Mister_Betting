@@ -455,7 +455,11 @@ async def post_step6_testimonial(bot: Bot, match) -> int | None:
 
 
 async def post_cancelled_message(bot: Bot, match, admin_user: str) -> None:
-    """Post a cancellation message when match is cancelled/postponed."""
+    """Post a cancellation message when match is cancelled/postponed (ONLY if pre-match was posted)."""
+    if not getattr(match, 'before_slip_posted', False):
+        logger.info(f"[POSTER] Skipping channel cancellation for {match.id} — pre-match slip was never posted.")
+        return
+
     text = (
         f"⚽ <b>MATCH CANCELLED / POSTPONED</b>\n\n"
         f"🏆 {match.league_name}\n"
