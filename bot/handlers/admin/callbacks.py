@@ -215,7 +215,7 @@ async def _perform_sync(cb: CallbackQuery):
     
     try:
         fetcher = MatchDataFetcher()
-        matches = await fetcher.fetch_upcoming_matches(days_ahead=3)
+        matches = await fetcher.fetch_upcoming_matches(days_ahead=1)
         
         matches_by_day = defaultdict(list)
         for m in matches:

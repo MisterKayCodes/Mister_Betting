@@ -202,7 +202,7 @@ class MatchDataFetcher:
     # PUBLIC: fetch upcoming fixtures
     # ─────────────────────────────────────────────────────────────────────────
 
-    async def fetch_upcoming_matches(self, days_ahead: int = 7) -> List[Dict]:
+    async def fetch_upcoming_matches(self, days_ahead: int = 1) -> List[Dict]:
         """Fetches fixtures for the next N days across our target leagues."""
         logger.info("[API] Fetching upcoming matches (primary: API-Football)...")
         try:
@@ -359,6 +359,9 @@ class MatchDataFetcher:
     # ─────────────────────────────────────────────────────────────────────────
 
     async def _af_fixtures(self, days_ahead: int) -> List[Dict]:
+        # Hard cap: API-Football free plan only allows today + 1 day max.
+        # Exceeding this triggers a plan-limit error that looks like a suspension.
+        days_ahead = min(days_ahead, 1)
         results = []
         # Major leagues to exclude — we only target obscure small leagues
         MAJOR_LEAGUES = {39, 140, 135, 78, 61, 2, 3, 848, 15}

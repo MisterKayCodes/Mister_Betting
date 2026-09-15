@@ -285,7 +285,7 @@ class TimelineScheduler:
         
         try:
             fetcher = MatchDataFetcher()
-            matches = await fetcher.fetch_upcoming_matches(days_ahead=3)
+            matches = await fetcher.fetch_upcoming_matches(days_ahead=1)
             
             # Group matches by day
             matches_by_day = defaultdict(list)
