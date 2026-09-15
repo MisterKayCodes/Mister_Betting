@@ -15,7 +15,10 @@ from loguru import logger
 from aiogram import Bot
 from aiogram.types import FSInputFile
 
-from bot.core.config import CHANNEL_ID, ADMIN_USERNAME
+from bot.core.config import (
+    CHANNEL_ID, ADMIN_USERNAME,
+    IMAGE_FACTORY_URL, IMAGE_FACTORY_FALLBACK_URL, IMAGE_FACTORY_API_KEY
+)
 from bot.core.database import async_session, Admin, Match
 from sqlalchemy import select, func
 
@@ -284,6 +287,90 @@ async def post_step5_final_slip(bot: Bot, match, is_win: bool) -> int | None:
         caption = f"{caption}{record_text}"
 
     return await _send_photo(bot, img_path, caption)
+
+
+async def post_step6_testimonial(bot: Bot, match) -> int | None:
+    """
+    Step 6 (WIN only follow-up): Generates and posts a testimonial screenshot
+    using Mister Image Factory.
+    Failsafe: logs warning and returns None on API timeout/failure so bot is never blocked.
+    """
+    logger.info(f"[STEP 6] Generating testimonial post for match {match.id}")
+    import aiohttp
+    import random
+    from datetime import datetime
+
+    # Load testimonial options
+    testimonials_file = os.path.join(os.getcwd(), "testimonials.json")
+    dms = [
+        "Bro your VIP just paid my rent for the month 🙏🏽",
+        "Was skeptical at first but 3 wins in a row... take my money!",
+        "Admin you are a legend. Cashed out $1,200 this morning."
+    ]
+    captions = ["This is why we do it. 💸 VIPs are eating tonight! DM @{admin}."]
+
+    if os.path.exists(testimonials_file):
+        try:
+            with open(testimonials_file, "r", encoding="utf-8") as f:
+                t_data = json.load(f)
+                dms = t_data.get("dms", dms)
+                captions = t_data.get("captions", captions)
+        except Exception as e:
+            logger.warning(f"[STEP 6] Failed to parse testimonials.json: {e}")
+
+    dm_text = random.choice(dms)
+    time_str = datetime.now().strftime("%H:%M")
+    admin_user = await _get_admin_username()
+    caption_template = random.choice(captions)
+    caption_text = caption_template.format(admin=admin_user)
+
+    payload = {
+        "message_text": dm_text,
+        "time": time_str
+    }
+
+    if not IMAGE_FACTORY_API_KEY:
+        logger.warning(f"[STEP 6] IMAGE_FACTORY_API_KEY not set in .env — skipping Step 6.")
+        return None
+
+    # Primary and fallback URLs
+    raw_urls = [IMAGE_FACTORY_URL, IMAGE_FACTORY_FALLBACK_URL]
+    urls = [
+        f"{base.rstrip('/')}/api/v1/generate/highlight-message?api_key={IMAGE_FACTORY_API_KEY}"
+        for base in raw_urls if base
+    ]
+
+    img_bytes = None
+    async with aiohttp.ClientSession() as session:
+        for url in urls:
+            try:
+                async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                    if resp.status == 200:
+                        img_bytes = await resp.read()
+                        break
+                    else:
+                        logger.warning(f"[STEP 6] Image Factory API error ({resp.status}) from {url}")
+            except Exception as e:
+                logger.warning(f"[STEP 6] Could not reach Image Factory at {url}: {e}")
+
+    if not img_bytes:
+        logger.warning(f"[STEP 6] Skipping Step 6 for match {match.id} — Image Factory unavailable.")
+        return None
+
+    # Save temp image for sending
+    output_dir = os.path.join(os.getcwd(), "output_images")
+    os.makedirs(output_dir, exist_ok=True)
+    temp_img_path = os.path.join(output_dir, f"match_{match.id}_step6_testimonial.png")
+
+    try:
+        with open(temp_img_path, "wb") as f:
+            f.write(img_bytes)
+
+        message_id = await _send_photo(bot, temp_img_path, caption_text)
+        return message_id
+    except Exception as e:
+        logger.warning(f"[STEP 6] Failed to post testimonial image: {e}")
+        return None
 
 
 async def post_cancelled_message(bot: Bot, match, admin_user: str) -> None:

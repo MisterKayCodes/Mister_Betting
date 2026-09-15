@@ -18,3 +18,8 @@ ALLSPORTS_API_KEY = os.getenv("ALLSPORTS_API_KEY", "")
 
 # Database
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///bot.db")
+
+# Image Factory
+IMAGE_FACTORY_URL = os.getenv("IMAGE_FACTORY_URL", "http://localhost:8112")
+IMAGE_FACTORY_FALLBACK_URL = os.getenv("IMAGE_FACTORY_FALLBACK_URL", "")
+IMAGE_FACTORY_API_KEY = os.getenv("IMAGE_FACTORY_API_KEY", "")

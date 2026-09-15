@@ -293,6 +293,36 @@ class TaskRunners:
             is_win=is_win,
         )
 
+        # ── Step 6 Scheduler (WIN only follow-up) ───────────────────────────
+        updated_match = await self._load_match(match_id)
+        if updated_match and updated_match.final_slip_posted and is_win:
+            step6_time = datetime.utcnow() + timedelta(minutes=30)
+            self.scheduler.add_job(
+                self.run_step6, "date",
+                run_date=step6_time,
+                args=[match_id],
+                id=f"step6_{match_id}",
+                replace_existing=True,
+                misfire_grace_time=None,
+            )
+            logger.info(f"[STEP 5] WIN confirmed — Scheduled Step 6 (Testimonial) for match {match_id} at {step6_time}")
+
+    async def run_step6(self, match_id: int):
+        """
+        Step 6 — Testimonial Screenshot post (WIN only follow-up, 30 mins after Step 5).
+        """
+        match = await self._load_match(match_id)
+        if not match:
+            logger.error(f"[STEP 6] Match {match_id} not found in DB.")
+            return
+
+        if not match.is_win:
+            logger.info(f"[STEP 6] Match {match_id} was not a WIN. Skipping testimonial.")
+            return
+
+        logger.info(f"[STEP 6] Executing testimonial post for match {match_id}")
+        await poster.post_step6_testimonial(self.bot, match)
+
     async def _auto_blacklist_check(self, league_name: str, report_id: int):
         """Check whether admin responded to a league report; if not, auto-blacklist and compensate VIPs."""
         from bot.core.database import async_session, LeagueWhitelist, LeagueReport, VIPCompensation, Match, AppConfig
