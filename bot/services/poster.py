@@ -16,8 +16,8 @@ from aiogram import Bot
 from aiogram.types import FSInputFile
 
 from bot.core.config import CHANNEL_ID, ADMIN_USERNAME
-from bot.core.database import async_session, Admin
-from sqlalchemy import select
+from bot.core.database import async_session, Admin, Match
+from sqlalchemy import select, func
 
 from bot.services.caption_engine import get_caption
 from bot.services.image_generator import ImageGenerator
@@ -200,6 +200,55 @@ async def post_step4_result(bot: Bot, match) -> int | None:
     return await _send_photo(bot, img_path, caption)
 
 
+async def _get_monthly_record_text(match) -> str:
+    """
+    Returns a proof-object text block with match prediction vs actual,
+    and current month's W/L record.
+    Failsafe: returns empty string if DB query fails so Step 5 NEVER crashes.
+    """
+    try:
+        from datetime import datetime
+        now = datetime.utcnow()
+        month_str = now.strftime("%B")
+        year_month = now.strftime("%Y-%m")
+
+        async with async_session() as session:
+            q_wins = await session.execute(
+                select(func.count(Match.id)).where(
+                    Match.is_win == True,
+                    func.strftime('%Y-%m', Match.kickoff_time) == year_month
+                )
+            )
+            wins = q_wins.scalar() or 0
+
+            q_losses = await session.execute(
+                select(func.count(Match.id)).where(
+                    Match.is_win == False,
+                    func.strftime('%Y-%m', Match.kickoff_time) == year_month
+                )
+            )
+            losses = q_losses.scalar() or 0
+
+        pred_home = match.claimed_home_score if match.claimed_home_score is not None else match.real_home_score
+        pred_away = match.claimed_away_score if match.claimed_away_score is not None else match.real_away_score
+        pred_str = f"{pred_home} - {pred_away}" if pred_home is not None else "N/A"
+
+        real_home = match.real_home_score if match.real_home_score is not None else "?"
+        real_away = match.real_away_score if match.real_away_score is not None else "?"
+        actual_str = f"{real_home} - {real_away}"
+
+        proof_block = (
+            f"\n\n⚽ <b>{match.home_team} vs {match.away_team}</b>\n"
+            f"🎯 <b>Prediction:</b> {pred_str}\n"
+            f"🏁 <b>Final Score:</b> {actual_str}\n\n"
+            f"📊 <b>{month_str} Record:</b> {wins}W — {losses}L"
+        )
+        return proof_block
+    except Exception as e:
+        logger.warning(f"[POSTER] Failed to generate monthly record text: {e}")
+        return ""
+
+
 async def post_step5_final_slip(bot: Bot, match, is_win: bool) -> int | None:
     logger.info(f"[STEP 5] Generating final slip for match {match.id} — {'WIN' if is_win else 'LOSS'}")
     view = "slip-won" if is_win else "slip-lost"
@@ -210,6 +259,11 @@ async def post_step5_final_slip(bot: Bot, match, is_win: bool) -> int | None:
     )
     pool = "win" if is_win else "lose"
     caption = await get_caption(pool, admin_user)
+
+    record_text = await _get_monthly_record_text(match)
+    if record_text:
+        caption = f"{caption}{record_text}"
+
     return await _send_photo(bot, img_path, caption)
 
 
