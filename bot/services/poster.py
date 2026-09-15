@@ -11,6 +11,7 @@ Key guarantee:
 import asyncio
 import os
 import json
+import random
 from loguru import logger
 from aiogram import Bot
 from aiogram.types import FSInputFile
@@ -173,7 +174,10 @@ async def _build_match_data(match, is_win: bool = None, hide_odds: bool = False,
                     stake = 5.0
                 payout = round(stake * claimed_odds, 2)
                 balance = round(bankroll - stake, 2)
-                cashout = round(payout * 0.75, 2)
+                if is_finished:
+                    cashout = round(payout * 0.75, 2)
+                else:
+                    cashout = round(stake * random.uniform(0.90, 0.98), 2)
     except Exception as e:
         logger.warning(f"[POSTER] Failed to apply flip data to match payload: {e}")
 
