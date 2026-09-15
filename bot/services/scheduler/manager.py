@@ -241,8 +241,8 @@ class TimelineScheduler:
         if missed_jobs:
             rush_time = now + timedelta(minutes=1)
             for fn, job_id, is_prematch, args in missed_jobs:
-                if is_prematch and now >= k:
-                    logger.warning(f"[SCHEDULER] Skipping missed pre-match {job_id} — game already in progress.")
+                if is_prematch and now >= (k + timedelta(minutes=30)):
+                    logger.warning(f"[SCHEDULER] Skipping missed pre-match {job_id} — game already past 30m grace period.")
                     continue
                 
                 self.scheduler.add_job(
