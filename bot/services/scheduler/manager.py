@@ -37,6 +37,12 @@ class TimelineScheduler:
         self.scheduler.start()
         logger.info("[SCHEDULER] APScheduler engine started successfully.")
 
+        # Every day at 00:00 UTC — Purge expired stuck matches before daily scan
+        self.scheduler.add_job(
+            self._purge_stuck_matches, "cron", hour=0, minute=0,
+            id="daily_purge", replace_existing=True
+        )
+
         # Every day at 00:01 UTC — Scan DB and schedule the day's matches
         self.scheduler.add_job(
             self._daily_match_scan, "cron", hour=0, minute=1,
@@ -161,6 +167,38 @@ class TimelineScheduler:
         else:
             logger.debug(f"[QUOTA] API-Football calls today: {calls}/{AF_DAILY_LIMIT} — within safe range.")
 
+    async def _purge_stuck_matches(self):
+        """
+        Garbage Collector — Sweeps DB for matches older than 24h still marked is_finished=False.
+        Marks them finished with skip_reason='auto_purged_expired' so they don't block pipeline.
+        """
+        logger.info("[GARBAGE COLLECTOR] Sweeping DB for expired stuck matches...")
+        from bot.core.database import async_session, Match
+        from sqlalchemy import update
+
+        cutoff = datetime.utcnow() - timedelta(hours=24)
+        try:
+            async with async_session() as session:
+                result = await session.execute(
+                    update(Match)
+                    .where(
+                        Match.is_finished == False,
+                        Match.kickoff_time < cutoff
+                    )
+                    .values(
+                        is_finished=True,
+                        skip_reason="auto_purged_expired"
+                    )
+                )
+                await session.commit()
+                purged = result.rowcount
+                if purged > 0:
+                    logger.warning(f"[GARBAGE COLLECTOR] 🧹 Swept DB: Auto-purged {purged} expired stuck match(es).")
+                else:
+                    logger.info("[GARBAGE COLLECTOR] ✅ DB is clean. 0 expired matches found.")
+        except Exception as e:
+            logger.error(f"[GARBAGE COLLECTOR] Error purging stuck matches: {e}")
+
     async def _check_and_sync_if_empty(self):
         """
         Check if database has any matches on startup.
@@ -172,6 +210,9 @@ class TimelineScheduler:
             await sync_af_quota_from_api()
         except Exception as e:
             logger.warning(f"[QUOTA] Initial server quota sync failed: {e}")
+
+        # Run Garbage Collector on startup to unjam old dead matches
+        await self._purge_stuck_matches()
 
         unposted_count = await self._count_unposted_matches()
         
