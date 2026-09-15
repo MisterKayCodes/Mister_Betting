@@ -82,8 +82,9 @@ async def admin_callbacks(cb: CallbackQuery):
 
 
 async def _handle_status(cb: CallbackQuery):
-    """Show bot health status"""
+    """Show bot health status including real-time API Quota monitoring"""
     from bot.core.database import async_session, Match, AppConfig
+    from bot.services.match_api import _af_calls_today, AF_DAILY_LIMIT, is_af_quota_safe, ALLSPORTS_API_KEY
     from sqlalchemy import select, func
     
     async with async_session() as session:
@@ -93,13 +94,19 @@ async def _handle_status(cb: CallbackQuery):
         )).scalar_one_or_none()
         channel = channel_row.value if channel_row else "Not set ❌"
     
+    af_status = "✅ Healthy" if is_af_quota_safe() else "⚠️ Warning Level"
+    allsports_status = "✅ Configured" if ALLSPORTS_API_KEY else "⚠️ Not Set"
+
     await cb.message.edit_text(
-        f"📊 <b>Bot Health Report</b>\n\n"
-        f"✅ Bot: Online\n"
-        f"✅ Database: Connected\n"
-        f"📡 Channel: <code>{channel}</code>\n"
-        f"🗄 Total matches in DB: {total}\n\n"
-        f"All systems operational.",
+        f"📊 <b>Bot Health & API Dashboard</b>\n\n"
+        f"✅ <b>Bot Engine:</b> Online\n"
+        f"✅ <b>Database:</b> Connected\n"
+        f"📡 <b>Channel:</b> <code>{channel}</code>\n"
+        f"🗄 <b>Matches in DB:</b> {total}\n\n"
+        f"🔌 <b>API Quotas & Health:</b>\n"
+        f"• ⚽ <b>API-Football:</b> {_af_calls_today}/{AF_DAILY_LIMIT} calls ({af_status})\n"
+        f"• 🔄 <b>AllSports Fallback:</b> {allsports_status}\n\n"
+        f"<i>All systems operational.</i>",
         reply_markup=main_keyboard(),
         parse_mode="HTML"
     )
