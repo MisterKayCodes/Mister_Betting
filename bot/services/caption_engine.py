@@ -10,27 +10,21 @@ from datetime import date, datetime
 # ---------------------------------------------------------------------------
 
 PREVIEW_CAPTIONS = [
-    "🚨 VIP fixed game confirmed for today. Our source is locked in. DM {admin} to secure your spot.",
-    "🔥 Tonight's match is 100% locked. The money is already moving. DM {admin} to join VIP before it's full.",
-    "📈 We never miss. Our inside info just dropped the exact score for today's game. DM {admin} NOW.",
-    "⚡ Big one tonight. Correct score confirmed. Our VIPs are already positioned. {admin} — join them.",
-    "💰 Insider tip confirmed. Stake $200, walk away with a smile. DM {admin} for access.",
-    "🎯 Another day, another locked game. Our analyst has the number. DM {admin} before slots fill up.",
+    "👀 Something about tonight's match caught our analyst's attention. The data pattern matches our biggest win this month. DM {admin}.",
+    "🎯 Tonight's VIP pick is ready. The only question is whether you're getting in before kickoff. DM {admin}.",
+    "🔒 Pick locked. Our system detected irregular betting volume in this fixture. We're watching closely. DM {admin}.",
 ]
 
 URGENCY_CAPTIONS = [
-    "⏳ Only a few hours left! We stop accepting VIPs 30 minutes before kickoff. DM {admin} NOW.",
-    "⚠️ LAST CHANCE. The game kicks off soon and our VIP slots are almost full. DM {admin}.",
-    "⏰ Tick tock. The clock is running. Are you watching us win, or winning WITH us? DM {admin}.",
-    "🔔 Final call! Kick-off is close. Don't be the one who watches others cash out. DM {admin}.",
-    "🚀 We are minutes away from locking the doors. VIP spots: almost gone. {admin} — message now.",
+    "⏳ VIP access closes exactly at kickoff. We don't take late entries once the ball is rolling. DM {admin}.",
+    "⚠️ Don't be the one watching the result tonight wishing you had joined. Kickoff is imminent. DM {admin}.",
+    "🔔 Last call. VIP members are already positioned and stakes are placed. DM {admin} to join them.",
 ]
 
 BLACK_BOX_CAPTIONS = [
-    "🔒 Bet is PLACED. $200 on the line. The exact score is hidden — VIPs already have it. DM {admin}.",
-    "💰 Ticket confirmed. Odds are massive today. Our VIPs know the score. You still have time. DM {admin}.",
-    "🎫 We are IN. $200 risk. You can see the market. You just can't see the pick — yet. DM {admin}.",
-    "⚽ Bet slip confirmed. Correct Score market. The number is covered for a reason. DM {admin} for access.",
+    "🎟️ The ticket is officially placed. The exact Correct Score is hidden, but the potential payout is huge. DM {admin}.",
+    "🤫 $200 risk locked in. We backed a very specific outcome that the bookies aren't expecting today. VIPs already know. DM {admin}.",
+    "💼 Slip confirmed. The market is covered. Now we let the game play out. DM {admin} for access to the hidden pick.",
 ]
 
 # ── FIXED: NEUTRAL result captions (no implied WIN) ──────────────────────────
@@ -44,18 +38,15 @@ RESULT_CAPTIONS = [
 
 # ── ENHANCED: WIN captions with day awareness ────────────────────────────────
 WIN_CAPTIONS = [
-    "✅ TICKET CASHED! Correct Score hit exactly as predicted! VIP members — enjoy the profit! 💸 Next game coming. DM {admin}.",
-    "🎯 BOOM. Exactly as called. We don't guess, we KNOW. Cashout confirmed. DM {admin} for tomorrow's game.",
-    "🔥 Another massive payout. The streak continues. Bookies bleeding. 📈 DM {admin} to join the next one.",
-    "💰 GREEN TICKET. $200 in, big money out. This is what VIP looks like. DM {admin} — next game incoming.",
-    "🏆 WON. Again. Like clockwork. Our VIPs never miss. DM {admin} to get tomorrow's fixed score.",
+    "🟢 VIP RESULT: CASHED ✅. Exactly as predicted. That’s another one on the board. DM {admin} for the next.",
+    "💰 TICKET LANDED! VIP members, check your accounts. The system pays off again. Next game loading... DM {admin}.",
+    "🔥 BOOM. Correct Score hit. If you were in VIP tonight, you’re waking up richer tomorrow. Don't miss the next one. DM {admin}.",
 ]
 
 # ── ENHANCED: LOSE captions with day awareness ───────────────────────────────
 LOSE_CAPTIONS = [
-    "❌ Rare miss today. The referee had other plans. 😤 ALL VIP members receive +1 FREE DAY compensation. We bounce back HARDER tomorrow. DM {admin}.",
-    "⚠️ Not our day — but this is football. VIPs: your subscription has been extended by 1 day automatically. Tomorrow's game is a LOCK. DM {admin}.",
-    "🙏 We take the L today. But 1 loss doesn't define us — our record does. All VIPs compensated. Back tomorrow stronger. DM {admin}.",
+    "❌ We take the L today. But one loss doesn't define us — our long-term record does. All VIPs compensated. DM {admin}.",
+    "⚠️ Pattern didn't hold tonight. The system was right but the bounce of the ball wasn't. We adjust and attack tomorrow. DM {admin}.",
 ]
 
 # ---------------------------------------------------------------------------
