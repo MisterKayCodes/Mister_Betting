@@ -324,12 +324,12 @@ class TimelineScheduler:
         # ── No matches waiting - proceed with sync ──────────────────────────────
         logger.info("[SCHEDULER] No pending matches. Proceeding with auto-sync...")
         
-        from bot.services.match_api import MatchDataFetcher
+        from bot.services.match_api import MatchDataFetcher, select_best_match_per_day
         from bot.core.database import async_session, Match, AppConfig
         from sqlalchemy import select
         from collections import defaultdict
         import json
-        
+
         try:
             fetcher = MatchDataFetcher()
             matches = await fetcher.fetch_upcoming_matches(days_ahead=1)
@@ -340,11 +340,8 @@ class TimelineScheduler:
                 day_str = m["kickoff_time"].strftime("%Y-%m-%d")
                 matches_by_day[day_str].append(m)
             
-            # Pick 1 match per day (same logic as manual sync)
-            selected_matches = []
-            for day_str, daily_matches in matches_by_day.items():
-                if daily_matches:
-                    selected_matches.append(random.choice(daily_matches))
+            # Filter and pick 1 best match per day (Black Box Protection)
+            selected_matches = select_best_match_per_day(matches_by_day)
             
             # Add to database
             added = 0

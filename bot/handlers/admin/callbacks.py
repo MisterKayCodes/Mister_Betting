@@ -208,7 +208,7 @@ async def _perform_sync(cb: CallbackQuery):
     """Actually perform the sync (called after approval or when DB empty)"""
     await cb.answer("Syncing matches from API...", show_alert=False)
     
-    from bot.services.match_api import MatchDataFetcher
+    from bot.services.match_api import MatchDataFetcher, select_best_match_per_day
     from bot.core.database import async_session, Match, AppConfig
     from sqlalchemy import select
     from collections import defaultdict
@@ -222,10 +222,7 @@ async def _perform_sync(cb: CallbackQuery):
             day_str = m["kickoff_time"].strftime("%Y-%m-%d")
             matches_by_day[day_str].append(m)
         
-        selected_matches = []
-        for day_str, daily_matches in matches_by_day.items():
-            if daily_matches:
-                selected_matches.append(random.choice(daily_matches))
+        selected_matches = select_best_match_per_day(matches_by_day)
         
         added = 0
         async with async_session() as session:

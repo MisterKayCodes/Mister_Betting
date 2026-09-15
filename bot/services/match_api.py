@@ -610,3 +610,37 @@ class MatchDataFetcher:
             "2-1": 9.80, "1-2": 11.50, "2-2": 14.75,
             "3-0": 21.50, "0-3": 26.50, "3-1": 18.50,
         }
+
+
+def select_best_match_per_day(matches_by_day: dict) -> list:
+    """
+    BLACK BOX PROTECTION FILTER:
+    Selects 1 match per day prioritizing fixtures that kick off at least 1 hour in advance
+    (so Step 3 Black Box slip has full time to post). Falls back to 30m grace period if needed.
+    """
+    now = datetime.utcnow()
+    selected_matches = []
+
+    for day_str, daily_matches in matches_by_day.items():
+        if not daily_matches:
+            continue
+
+        # Priority 1: Kickoff >= now + 1 hour (Full pre-match timeline preserved)
+        future_valid = [m for m in daily_matches if m["kickoff_time"] >= now + timedelta(hours=1)]
+        if future_valid:
+            chosen = random.choice(future_valid)
+            logger.info(f"[MATCH FILTER] Selected pre-match fixture '{chosen['home_team']} vs {chosen['away_team']}' (Kickoff: {chosen['kickoff_time'].strftime('%H:%M UTC')})")
+            selected_matches.append(chosen)
+            continue
+
+        # Priority 2: Kickoff >= now - 30 minutes (Within Rush Mode grace window)
+        grace_valid = [m for m in daily_matches if m["kickoff_time"] >= now - timedelta(minutes=30)]
+        if grace_valid:
+            chosen = random.choice(grace_valid)
+            logger.warning(f"[MATCH FILTER] No +1h fixtures. Selected grace-period match '{chosen['home_team']} vs {chosen['away_team']}' (Kickoff: {chosen['kickoff_time'].strftime('%H:%M UTC')})")
+            selected_matches.append(chosen)
+            continue
+
+        logger.warning(f"[MATCH FILTER] All fixtures for {day_str} have already passed grace period. Skipping day.")
+
+    return selected_matches
