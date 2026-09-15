@@ -53,11 +53,12 @@ async def main():
 
         payout = round(stake * odds, 2)
         balance_on_slip = round(current_bankroll - stake, 2)
+        cashout_on_slip = round(payout * 0.75, 2)
 
         print(f"--- 📅 DAY {day_num}/7 ---")
         print(f"💰 Starting Bankroll: ${current_bankroll:.2f}")
-        print(f"🎯 Today's Stake (50%): ${stake:.2f} (Balance on slip image: ${balance_on_slip:.2f})")
-        print(f"🎲 Match Odds: {odds:.2f} | Potential Payout: ${payout:.2f}")
+        print(f"🎯 Today's Stake (50%): ${stake:.2f} (Balance on slip: ${balance_on_slip:.2f})")
+        print(f"🎲 Odds: {odds:.2f} | Potential Payout: ${payout:.2f} | Live Cashout: ${cashout_on_slip:.2f}")
 
         if is_win:
             profit = payout - stake

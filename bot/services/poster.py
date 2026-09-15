@@ -173,6 +173,7 @@ async def _build_match_data(match, is_win: bool = None, hide_odds: bool = False,
                     stake = 5.0
                 payout = round(stake * claimed_odds, 2)
                 balance = round(bankroll - stake, 2)
+                cashout = round(payout * 0.75, 2)
     except Exception as e:
         logger.warning(f"[POSTER] Failed to apply flip data to match payload: {e}")
 
@@ -192,7 +193,7 @@ async def _build_match_data(match, is_win: bool = None, hide_odds: bool = False,
         "odds":             claimed_odds,
         "payout":           payout,
         "balance":          balance,
-        "cashout":          float(ui.get_fluctuating_cashout().replace(",", "")),
+        "cashout":          cashout,
         "adminUser":        admin_user or ADMIN_USERNAME,
         "hideOdds":         hide_odds,
         "isWin":            is_win,
