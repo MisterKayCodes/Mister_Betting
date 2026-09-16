@@ -207,6 +207,7 @@ async def _build_match_data(match, is_win: bool = None, hide_odds: bool = False,
     stake = 200.00
     payout = round(stake * claimed_odds, 2)
     balance = float(ui.get_fluctuating_balance().replace(",", ""))
+    cashout = round(stake * random.uniform(0.90, 0.98), 2)
 
     # Check if 7-Day Flip campaign is active
     try:

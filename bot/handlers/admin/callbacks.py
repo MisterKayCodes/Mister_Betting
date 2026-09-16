@@ -93,7 +93,13 @@ async def _handle_force_hype(cb: CallbackQuery):
 
     async with async_session() as session:
         q = await session.execute(
-            select(Match).order_by(desc(Match.kickoff_time))
+            select(Match)
+            .where(
+                (Match.step5_message_id.isnot(None)) |
+                (Match.step3_message_id.isnot(None)) |
+                (Match.step1_message_id.isnot(None))
+            )
+            .order_by(desc(Match.kickoff_time))
         )
         match = q.scalars().first()
 
