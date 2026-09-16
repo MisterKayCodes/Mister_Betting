@@ -56,16 +56,16 @@ async def trigger_simulator_hype(message_id: int, step_type: str = "win", custom
     import aiohttp
 
     default_emojis = {
-        "step1": ["👀", "🔥"],
-        "step2": ["⏳", "🚨", "🙏"],
-        "step3": ["🔒", "🎯", "💰"],
-        "step4": ["📊", "👀"],
-        "step5_win": ["🔥", "💸", "🐐", "💯"],
-        "step5_loss": ["😮", "💪", "🙏"],
-        "step6": ["💸", "🔥", "🙌", "❤️"]
+        "step1": ["👀", "🔥", "👍"],
+        "step2": ["⏳", "🔥", "👍"],
+        "step3": ["🎯", "🔥", "👍"],
+        "step4": ["📊", "👀", "👍"],
+        "step5_win": ["🔥", "❤️", "👏", "💯"],
+        "step5_loss": ["🙏", "👍", "❤️"],
+        "step6": ["🔥", "❤️", "👏", "💯"]
     }
 
-    emojis = custom_emojis or default_emojis.get(step_type, ["🔥", "💸", "🐐"])
+    emojis = custom_emojis or default_emojis.get(step_type, ["🔥", "👍", "❤️"])
 
     payload = {
         "channel_id": CHANNEL_ID,
