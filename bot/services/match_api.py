@@ -11,6 +11,7 @@ suspension detector and a live fallback to AllSports.
 import aiohttp
 import asyncio
 import json
+import random
 from difflib import SequenceMatcher
 from loguru import logger
 from datetime import datetime, timedelta
