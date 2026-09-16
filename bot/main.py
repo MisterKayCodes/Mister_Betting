@@ -64,6 +64,10 @@ async def main():
     await init_db()
     logger.success("Database ready.")
 
+    from bot.core.config import ALLSPORTS_API_KEY
+    if not ALLSPORTS_API_KEY:
+        logger.warning("[CONFIG] ALLSPORTS_API_KEY not set in .env — fallback football data source is DISABLED.")
+
     # 2. Create bot and dispatcher
     bot = Bot(token=BOT_TOKEN)
     dp  = Dispatcher()

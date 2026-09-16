@@ -27,3 +27,4 @@ IMAGE_FACTORY_API_KEY = os.getenv("IMAGE_FACTORY_API_KEY", "")
 # Mister Simulator Integration
 SIMULATOR_API_URL = os.getenv("SIMULATOR_API_URL", "http://localhost:8012")
 SIMULATOR_API_KEY = os.getenv("SIMULATOR_API_KEY", "")
+DISCUSSION_GROUP_ID = os.getenv("DISCUSSION_GROUP_ID", "-1004348182429")

@@ -19,7 +19,7 @@ from aiogram.types import FSInputFile
 from bot.core.config import (
     CHANNEL_ID, ADMIN_USERNAME,
     IMAGE_FACTORY_URL, IMAGE_FACTORY_FALLBACK_URL, IMAGE_FACTORY_API_KEY,
-    SIMULATOR_API_URL, SIMULATOR_API_KEY
+    SIMULATOR_API_URL, SIMULATOR_API_KEY, DISCUSSION_GROUP_ID
 )
 from bot.core.database import async_session, Admin, Match
 from sqlalchemy import select, func
@@ -33,6 +33,15 @@ ui = UIUtils()
 
 MAX_RETRIES = 3          # Maximum send attempts before giving up
 RETRY_DELAY = 5          # Seconds between retries
+
+# Track background hype/crowd tasks to prevent GC task destruction (Fix H3)
+_PENDING_HYPE_TASKS: set[asyncio.Task] = set()
+
+def _fire_and_track(coro):
+    t = asyncio.create_task(coro)
+    _PENDING_HYPE_TASKS.add(t)
+    t.add_done_callback(_PENDING_HYPE_TASKS.discard)
+    return t
 
 
 async def trigger_simulator_hype(message_id: int, step_type: str = "win", custom_emojis: list[str] = None):
@@ -82,6 +91,7 @@ async def trigger_simulator_hype(message_id: int, step_type: str = "win", custom
                     logger.warning(f"[POSTER] Mister Simulator API returned HTTP {resp.status}: {text}")
     except Exception as e:
         logger.warning(f"[POSTER] Could not reach Mister Simulator at {url}: {e}")
+
 
 
 # ── Internal send helper ────────────────────────────────────────────────────
@@ -280,7 +290,7 @@ async def post_step1_preview(bot: Bot, match) -> int | None:
     flip_hdr = await _get_flip_caption_header()
     msg_id = await _send_photo(bot, img_path, f"{flip_hdr}{caption}")
     if msg_id:
-        asyncio.create_task(trigger_simulator_hype(msg_id, "step1"))
+        _fire_and_track(trigger_simulator_hype(msg_id, "step1"))
     return msg_id
 
 
@@ -295,7 +305,7 @@ async def post_step2_urgency(bot: Bot, match) -> int | None:
     flip_hdr = await _get_flip_caption_header()
     msg_id = await _send_photo(bot, img_path, f"{flip_hdr}{caption}")
     if msg_id:
-        asyncio.create_task(trigger_simulator_hype(msg_id, "step2"))
+        _fire_and_track(trigger_simulator_hype(msg_id, "step2"))
     return msg_id
 
 
@@ -310,7 +320,7 @@ async def post_step3_black_box(bot: Bot, match) -> int | None:
     flip_hdr = await _get_flip_caption_header()
     msg_id = await _send_photo(bot, img_path, f"{flip_hdr}{caption}")
     if msg_id:
-        asyncio.create_task(trigger_simulator_hype(msg_id, "step3"))
+        _fire_and_track(trigger_simulator_hype(msg_id, "step3"))
     return msg_id
 
 
@@ -325,7 +335,7 @@ async def post_step4_result(bot: Bot, match) -> int | None:
     flip_hdr = await _get_flip_caption_header()
     msg_id = await _send_photo(bot, img_path, f"{flip_hdr}{caption}")
     if msg_id:
-        asyncio.create_task(trigger_simulator_hype(msg_id, "step4"))
+        _fire_and_track(trigger_simulator_hype(msg_id, "step4"))
     return msg_id
 
 
@@ -397,6 +407,51 @@ async def _get_monthly_record_text(match) -> str:
         return ""
 
 
+async def trigger_ai_crowd(match, stake: float, odds: float, payout: float, delay_seconds: int = 120):
+    """
+    Fire-and-forget helper to ping Mister Simulator for AI discussion group crowd chatter.
+    Fires after a 2-3 minute natural delay post-WIN.
+    """
+    if not SIMULATOR_API_URL or not SIMULATOR_API_KEY:
+        logger.debug("[POSTER] SIMULATOR_API_URL or SIMULATOR_API_KEY not set. Skipping AI crowd trigger.")
+        return
+
+    import aiohttp
+
+    # Sleep for natural delay (e.g. 120 seconds) before triggering bots in discussion group
+    await asyncio.sleep(delay_seconds)
+
+    payload = {
+        "group_id": DISCUSSION_GROUP_ID,
+        "team_home": getattr(match, "home_team", ""),
+        "team_away": getattr(match, "away_team", ""),
+        "score_home": getattr(match, "real_home_score", 0),
+        "score_away": getattr(match, "real_away_score", 0),
+        "stake": stake,
+        "odds": odds,
+        "payout": payout,
+        "step_type": "step5_win"
+    }
+
+    headers = {
+        "X-API-Key": SIMULATOR_API_KEY,
+        "Content-Type": "application/json"
+    }
+
+    url = f"{SIMULATOR_API_URL.rstrip('/')}/api/v1/simulator/trigger-ai-script"
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                if resp.status in (200, 201, 202):
+                    logger.success(f"[POSTER] 🤖 Triggered AI Crowd script for match_id={match.id} in {DISCUSSION_GROUP_ID}")
+                else:
+                    text = await resp.text()
+                    logger.warning(f"[POSTER] AI Crowd trigger returned HTTP {resp.status}: {text}")
+    except Exception as e:
+        logger.warning(f"[POSTER] Could not reach Mister Simulator at {url} for AI Crowd: {e}")
+
+
 async def post_step5_final_slip(bot: Bot, match, is_win: bool) -> int | None:
     logger.info(f"[STEP 5] Generating final slip for match {match.id} — {'WIN' if is_win else 'LOSS'}")
     view = "slip-won" if is_win else "slip-lost"
@@ -416,7 +471,16 @@ async def post_step5_final_slip(bot: Bot, match, is_win: bool) -> int | None:
     msg_id = await _send_photo(bot, img_path, f"{flip_hdr}{caption}")
     if msg_id:
         step_type = "step5_win" if is_win else "step5_loss"
-        asyncio.create_task(trigger_simulator_hype(msg_id, step_type))
+        _fire_and_track(trigger_simulator_hype(msg_id, step_type))
+        if is_win:
+            # Phase 2 Step 1: Trigger AI Crowd in Discussion Group after 2-minute delay with exact slip data
+            _fire_and_track(trigger_ai_crowd(
+                match,
+                stake=data.get("stake", 100.0),
+                odds=data.get("odds", 1.85),
+                payout=data.get("payout", 185.0),
+                delay_seconds=120
+            ))
     return msg_id
 
 
