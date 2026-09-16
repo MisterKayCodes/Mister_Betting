@@ -41,5 +41,6 @@ def main_keyboard() -> InlineKeyboardMarkup:
          InlineKeyboardButton(text="📈 Weekly Report",     callback_data="adm_weekly_report")],
         [InlineKeyboardButton(text="📋 Manage Whitelist",  callback_data="adm_manage_whitelist"),
          InlineKeyboardButton(text="🔄 7-Day Flip Campaign", callback_data="adm_flip_campaign")],
-        [InlineKeyboardButton(text="🎭 Post Testimonial",   callback_data="adm_post_testimonial")],
+        [InlineKeyboardButton(text="🎭 Post Testimonial",   callback_data="adm_post_testimonial"),
+         InlineKeyboardButton(text="🤖 Force Hype",         callback_data="adm_force_hype")],
     ])

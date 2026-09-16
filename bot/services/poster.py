@@ -18,7 +18,8 @@ from aiogram.types import FSInputFile
 
 from bot.core.config import (
     CHANNEL_ID, ADMIN_USERNAME,
-    IMAGE_FACTORY_URL, IMAGE_FACTORY_FALLBACK_URL, IMAGE_FACTORY_API_KEY
+    IMAGE_FACTORY_URL, IMAGE_FACTORY_FALLBACK_URL, IMAGE_FACTORY_API_KEY,
+    SIMULATOR_API_URL, SIMULATOR_API_KEY
 )
 from bot.core.database import async_session, Admin, Match
 from sqlalchemy import select, func
@@ -32,6 +33,55 @@ ui = UIUtils()
 
 MAX_RETRIES = 3          # Maximum send attempts before giving up
 RETRY_DELAY = 5          # Seconds between retries
+
+
+async def trigger_simulator_hype(message_id: int, step_type: str = "win", custom_emojis: list[str] = None):
+    """
+    Fire-and-forget helper to ping Mister Simulator API for auto views, reactions & hype comments.
+    Does not crash Mister Betting if Simulator is offline or disabled.
+    """
+    if not SIMULATOR_API_URL or not SIMULATOR_API_KEY:
+        logger.debug("[POSTER] SIMULATOR_API_URL or SIMULATOR_API_KEY not configured. Skipping hype trigger.")
+        return
+
+    import aiohttp
+
+    default_emojis = {
+        "step1": ["👀", "🔥"],
+        "step2": ["⏳", "🚨", "🙏"],
+        "step3": ["🔒", "🎯", "💰"],
+        "step4": ["📊", "👀"],
+        "step5_win": ["🔥", "💸", "🐐", "💯"],
+        "step5_loss": ["😮", "💪", "🙏"],
+        "step6": ["💸", "🔥", "🙌", "❤️"]
+    }
+
+    emojis = custom_emojis or default_emojis.get(step_type, ["🔥", "💸", "🐐"])
+
+    payload = {
+        "channel_id": CHANNEL_ID,
+        "message_id": message_id,
+        "emojis": emojis,
+        "step_type": step_type
+    }
+
+    headers = {
+        "X-API-Key": SIMULATOR_API_KEY,
+        "Content-Type": "application/json"
+    }
+
+    url = f"{SIMULATOR_API_URL.rstrip('/')}/api/v1/telethon/hype-post"
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status in (200, 201, 202):
+                    logger.success(f"[POSTER] 🤖 Triggered Mister Simulator hype for message_id={message_id} (step={step_type})")
+                else:
+                    text = await resp.text()
+                    logger.warning(f"[POSTER] Mister Simulator API returned HTTP {resp.status}: {text}")
+    except Exception as e:
+        logger.warning(f"[POSTER] Could not reach Mister Simulator at {url}: {e}")
 
 
 # ── Internal send helper ────────────────────────────────────────────────────
@@ -227,7 +277,10 @@ async def post_step1_preview(bot: Bot, match) -> int | None:
     )
     caption = await get_caption("preview", admin_user)
     flip_hdr = await _get_flip_caption_header()
-    return await _send_photo(bot, img_path, f"{flip_hdr}{caption}")
+    msg_id = await _send_photo(bot, img_path, f"{flip_hdr}{caption}")
+    if msg_id:
+        asyncio.create_task(trigger_simulator_hype(msg_id, "step1"))
+    return msg_id
 
 
 async def post_step2_urgency(bot: Bot, match) -> int | None:
@@ -239,7 +292,10 @@ async def post_step2_urgency(bot: Bot, match) -> int | None:
     )
     caption = await get_caption("urgency", admin_user)
     flip_hdr = await _get_flip_caption_header()
-    return await _send_photo(bot, img_path, f"{flip_hdr}{caption}")
+    msg_id = await _send_photo(bot, img_path, f"{flip_hdr}{caption}")
+    if msg_id:
+        asyncio.create_task(trigger_simulator_hype(msg_id, "step2"))
+    return msg_id
 
 
 async def post_step3_black_box(bot: Bot, match) -> int | None:
@@ -251,7 +307,10 @@ async def post_step3_black_box(bot: Bot, match) -> int | None:
     )
     caption = await get_caption("black_box", admin_user)
     flip_hdr = await _get_flip_caption_header()
-    return await _send_photo(bot, img_path, f"{flip_hdr}{caption}")
+    msg_id = await _send_photo(bot, img_path, f"{flip_hdr}{caption}")
+    if msg_id:
+        asyncio.create_task(trigger_simulator_hype(msg_id, "step3"))
+    return msg_id
 
 
 async def post_step4_result(bot: Bot, match) -> int | None:
@@ -263,7 +322,10 @@ async def post_step4_result(bot: Bot, match) -> int | None:
     )
     caption = await get_caption("result", admin_user)
     flip_hdr = await _get_flip_caption_header()
-    return await _send_photo(bot, img_path, f"{flip_hdr}{caption}")
+    msg_id = await _send_photo(bot, img_path, f"{flip_hdr}{caption}")
+    if msg_id:
+        asyncio.create_task(trigger_simulator_hype(msg_id, "step4"))
+    return msg_id
 
 
 async def _get_monthly_record_text(match) -> str:
@@ -350,7 +412,11 @@ async def post_step5_final_slip(bot: Bot, match, is_win: bool) -> int | None:
         caption = f"{caption}{record_text}"
 
     flip_hdr = await _get_flip_caption_header()
-    return await _send_photo(bot, img_path, f"{flip_hdr}{caption}")
+    msg_id = await _send_photo(bot, img_path, f"{flip_hdr}{caption}")
+    if msg_id:
+        step_type = "step5_win" if is_win else "step5_loss"
+        asyncio.create_task(trigger_simulator_hype(msg_id, step_type))
+    return msg_id
 
 
 async def post_flip_completed_celebration(bot: Bot, final_bankroll: float) -> int | None:

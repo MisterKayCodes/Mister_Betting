@@ -81,6 +81,45 @@ async def admin_callbacks(cb: CallbackQuery):
         await _handle_set_flip_bankroll(cb)
     elif data == "adm_post_testimonial":
         await _handle_post_testimonial(cb)
+    elif data == "adm_force_hype":
+        await _handle_force_hype(cb)
+
+
+async def _handle_force_hype(cb: CallbackQuery):
+    """Manually trigger Mister Simulator hype (views, emojis, reactions) for recent channel post"""
+    from bot.core.database import async_session, Match
+    from sqlalchemy import select, desc
+    from bot.services import poster
+
+    async with async_session() as session:
+        q = await session.execute(
+            select(Match).order_by(desc(Match.kickoff_time))
+        )
+        match = q.scalars().first()
+
+    msg_id = None
+    step_type = "step5_win"
+
+    if match:
+        msg_id = match.step5_message_id or match.step3_message_id or match.step1_message_id
+        if match.is_win is False:
+            step_type = "step5_loss"
+        elif match.before_slip_posted and not match.is_finished:
+            step_type = "step3"
+
+    if not msg_id:
+        await cb.answer("❌ No recent posted message ID found in DB.", show_alert=True)
+        return
+
+    await cb.answer("⏳ Sending hype trigger to Mister Simulator...", show_alert=False)
+    await poster.trigger_simulator_hype(msg_id, step_type=step_type)
+    await cb.message.answer(
+        f"🤖 <b>Simulator Hype Triggered!</b>\n\n"
+        f"• Message ID: <code>{msg_id}</code>\n"
+        f"• Step Mode: <code>{step_type}</code>\n\n"
+        f"Telethon sessions will view, react, and engage shortly.",
+        parse_mode="HTML"
+    )
 
 
 async def _handle_post_testimonial(cb: CallbackQuery):
