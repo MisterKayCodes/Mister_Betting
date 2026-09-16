@@ -199,6 +199,41 @@ class TimelineScheduler:
         except Exception as e:
             logger.error(f"[GARBAGE COLLECTOR] Error purging stuck matches: {e}")
 
+    async def _recover_missed_testimonials(self):
+        """
+        Startup Recovery — Finds any winning match from the last 24h that missed its Step 6 testimonial
+        (e.g., due to a PM2 restart wiping the timer) and schedules it in Rush Mode.
+        """
+        logger.info("[TESTIMONIAL RECOVERY] Checking for missed winning testimonials...")
+        from bot.core.database import async_session, Match
+        from sqlalchemy import select
+
+        cutoff = datetime.utcnow() - timedelta(hours=24)
+        try:
+            async with async_session() as session:
+                q = await session.execute(
+                    select(Match).where(
+                        Match.is_win == True,
+                        Match.final_slip_posted == True,
+                        Match.testimonial_posted == False,
+                        Match.kickoff_time >= cutoff
+                    )
+                )
+                matches = q.scalars().all()
+                for m in matches:
+                    rush_time = datetime.utcnow() + timedelta(seconds=60)
+                    self.scheduler.add_job(
+                        self.runners.run_step6, "date",
+                        run_date=rush_time,
+                        args=[m.id],
+                        id=f"recover_step6_{m.id}",
+                        replace_existing=True,
+                        misfire_grace_time=None
+                    )
+                    logger.warning(f"[TESTIMONIAL RECOVERY] 🔄 Recovered missed Step 6 for winning match {m.id} ({m.home_team} vs {m.away_team}). Scheduled in 60s.")
+        except Exception as e:
+            logger.error(f"[TESTIMONIAL RECOVERY] Failed to recover missed testimonials: {e}")
+
     async def _check_and_sync_if_empty(self):
         """
         Check if database has any matches on startup.
@@ -213,6 +248,9 @@ class TimelineScheduler:
 
         # Run Garbage Collector on startup to unjam old dead matches
         await self._purge_stuck_matches()
+
+        # Run Testimonial Recovery on startup for missed winning testimonials
+        await self._recover_missed_testimonials()
 
         unposted_count = await self._count_unposted_matches()
         

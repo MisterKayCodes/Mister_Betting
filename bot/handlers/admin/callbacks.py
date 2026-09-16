@@ -79,6 +79,41 @@ async def admin_callbacks(cb: CallbackQuery):
         await _handle_stop_flip(cb)
     elif data == "adm_set_flip_bankroll":
         await _handle_set_flip_bankroll(cb)
+    elif data == "adm_post_testimonial":
+        await _handle_post_testimonial(cb)
+
+
+async def _handle_post_testimonial(cb: CallbackQuery):
+    """Manually trigger Step 6 Testimonial post for the latest winning match"""
+    from bot.core.database import async_session, Match
+    from sqlalchemy import select, desc, update
+    from bot.services import poster
+
+    async with async_session() as session:
+        q = await session.execute(
+            select(Match)
+            .where(Match.is_win == True, Match.final_slip_posted == True)
+            .order_by(desc(Match.kickoff_time))
+        )
+        match = q.scalars().first()
+
+    if not match:
+        await cb.answer("❌ No winning matches found to post testimonial for.", show_alert=True)
+        return
+
+    await cb.answer("⏳ Generating testimonial screenshot...", show_alert=False)
+    try:
+        msg_id = await poster.post_step6_testimonial(cb.bot, match)
+        if msg_id:
+            async with async_session() as session:
+                await session.execute(update(Match).where(Match.id == match.id).values(testimonial_posted=True))
+                await session.commit()
+            await cb.message.answer(f"✅ <b>Testimonial posted successfully!</b> (Message ID: {msg_id})", parse_mode="HTML")
+        else:
+            await cb.message.answer("⚠️ Could not generate testimonial (Image Factory service may be unavailable). Check logs.", parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"[ADMIN] Manual testimonial post failed: {e}")
+        await cb.message.answer(f"❌ Error posting testimonial: {e}")
 
 
 async def _handle_status(cb: CallbackQuery):

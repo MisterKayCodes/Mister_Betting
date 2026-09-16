@@ -407,12 +407,19 @@ class TaskRunners:
             logger.error(f"[STEP 6] Match {match_id} not found in DB.")
             return
 
+        if getattr(match, 'testimonial_posted', False):
+            logger.info(f"[STEP 6] Testimonial already posted for match {match_id}. Skipping.")
+            return
+
         if not match.is_win:
             logger.info(f"[STEP 6] Match {match_id} was not a WIN. Skipping testimonial.")
             return
 
         logger.info(f"[STEP 6] Executing testimonial post for match {match_id}")
-        await poster.post_step6_testimonial(self.bot, match)
+        msg_id = await poster.post_step6_testimonial(self.bot, match)
+        if msg_id:
+            await self._update_match(match_id, testimonial_posted=True)
+            logger.success(f"[STEP 6] ✅ Testimonial posted for match {match_id} (msg_id={msg_id})")
 
     async def _auto_blacklist_check(self, league_name: str, report_id: int):
         """Check whether admin responded to a league report; if not, auto-blacklist and compensate VIPs."""

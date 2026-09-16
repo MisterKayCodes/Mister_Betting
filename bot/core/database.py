@@ -30,6 +30,7 @@ class Match(Base):
     before_slip_posted  = Column(Boolean, default=False)  # Step 3
     final_slip_posted   = Column(Boolean, default=False)  # Step 5
     result_preview_posted = Column(Boolean, default=False) # Step 4
+    testimonial_posted  = Column(Boolean, default=False)  # Step 6
 
     # ── NEW: Telegram message IDs for each posted step ──────────────────────
     # Storing these lets us VERIFY a post actually landed in the channel.
@@ -92,6 +93,7 @@ _REQUIRED_COLUMNS = {
     "before_slip_posted":      "BOOLEAN DEFAULT 0",
     "final_slip_posted":       "BOOLEAN DEFAULT 0",
     "result_preview_posted":   "BOOLEAN DEFAULT 0",
+    "testimonial_posted":      "BOOLEAN DEFAULT 0",
     "preview_posted":          "BOOLEAN DEFAULT 0",
     "claimed_home_score":      "INTEGER",
     "claimed_away_score":      "INTEGER",
