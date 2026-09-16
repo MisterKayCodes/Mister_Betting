@@ -579,6 +579,8 @@ async def post_step6_testimonial(bot: Bot, match) -> int | None:
             f.write(img_bytes)
 
         message_id = await _send_photo(bot, temp_img_path, caption_text)
+        if message_id:
+            _fire_and_track(trigger_simulator_hype(message_id, "step6"))
         return message_id
     except Exception as e:
         logger.warning(f"[STEP 6] Failed to post testimonial image: {e}")
