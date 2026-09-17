@@ -407,10 +407,11 @@ async def _get_monthly_record_text(match) -> str:
         return ""
 
 
-async def trigger_ai_crowd(match, stake: float, odds: float, payout: float, delay_seconds: int = 120):
+async def trigger_ai_crowd(match, stake: float, odds: float, payout: float, delay_seconds: int = 120, channel_post_id: int = None):
     """
     Fire-and-forget helper to ping Mister Simulator for AI discussion group crowd chatter.
     Fires after a 2-3 minute natural delay post-WIN.
+    channel_post_id: the channel post's message_id so comments thread under it in the discussion group.
     """
     if not SIMULATOR_API_URL or not SIMULATOR_API_KEY:
         logger.debug("[POSTER] SIMULATOR_API_URL or SIMULATOR_API_KEY not set. Skipping AI crowd trigger.")
@@ -430,7 +431,8 @@ async def trigger_ai_crowd(match, stake: float, odds: float, payout: float, dela
         "stake": stake,
         "odds": odds,
         "payout": payout,
-        "step_type": "step5_win"
+        "step_type": "step5_win",
+        "channel_post_id": channel_post_id  # thread crowd comments under the channel post
     }
 
     headers = {
@@ -479,7 +481,8 @@ async def post_step5_final_slip(bot: Bot, match, is_win: bool) -> int | None:
                 stake=data.get("stake", 100.0),
                 odds=data.get("odds", 1.85),
                 payout=data.get("payout", 185.0),
-                delay_seconds=120
+                delay_seconds=120,
+                channel_post_id=msg_id
             ))
     return msg_id
 
