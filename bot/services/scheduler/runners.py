@@ -681,10 +681,16 @@ class TaskRunners:
                         ]
                         
                         if strikes >= 3:
-                            kb_buttons.append([InlineKeyboardButton(text='🚫 Blacklist League', callback_data=f"adm_blacklist_report:{report_id}")])
-                            msg_text = f"⚠️ League <b>{league_name}</b> has failed to provide final scores {strikes} times.\n\nYou can manually update the score or blacklist this league."
+                            # Auto-blacklist league immediately on 3 strikes
+                            await session.execute(
+                                update(LeagueWhitelist)
+                                .where(LeagueWhitelist.league_name == league_name)
+                                .values(enabled=False)
+                            )
+                            await session.commit()
+                            msg_text = f"🚫 <b>AUTOMATIC BLACKLIST!</b>\nLeague <b>{league_name}</b> has failed score fetching {strikes} times and has been <b>auto-blacklisted</b> to protect future picks!"
                         else:
-                            msg_text = f"⚠️ Score missing for fixture {fixture_id} after 5 attempts. Use <b>Update Match</b> below to resolve it manually."
+                            msg_text = f"⚠️ Score missing for fixture {fixture_id} (Strike {strikes}/3). Use <b>Update Match</b> below to resolve manually."
                             
                         kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
                         await self.bot.send_message(admin_chat, msg_text, reply_markup=kb, parse_mode='HTML')

@@ -60,6 +60,9 @@ async def main():
     logger.info("  Mister Betting Bot — Starting Up")
     logger.info("=" * 50)
 
+    # ─── START THE HEARTBEAT TASK EARLY ───
+    asyncio.create_task(monitor_polling_vitality())
+
     # 1. Init database
     await init_db()
     logger.success("Database ready.")
@@ -92,9 +95,6 @@ async def main():
     #    (so the bot works right away after first launch)
     logger.info("Running immediate match scan on startup...")
     await scheduler._daily_match_scan()
-
-    # ─── START THE HEARTBEAT TASK HERE ───
-    asyncio.create_task(monitor_polling_vitality())
 
     # 6. Start polling Telegram
     logger.success("Bot is polling. Send /start to your bot in Telegram!")
