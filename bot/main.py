@@ -96,9 +96,13 @@ async def main():
     logger.info("Running immediate match scan on startup...")
     await scheduler._daily_match_scan()
 
-    # 6. Start polling Telegram
-    logger.success("Bot is polling. Send /start to your bot in Telegram!")
-    await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
+    # 6. Start polling Telegram and Empire Ledger API server on port 8015
+    from api.server import run_api_server
+    logger.success("Bot is polling & API server starting on port 8015...")
+    await asyncio.gather(
+        dp.start_polling(bot, allowed_updates=["message", "callback_query"]),
+        run_api_server(port=8015)
+    )
 
 
 if __name__ == "__main__":
