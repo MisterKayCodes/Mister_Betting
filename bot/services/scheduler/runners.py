@@ -681,14 +681,24 @@ class TaskRunners:
                         ]
                         
                         if strikes >= 3:
-                            # Auto-blacklist league immediately on 3 strikes
+                            # Auto-blacklist league and teams immediately on 3 strikes
+                            from bot.core.database import TeamBlacklist
                             await session.execute(
                                 update(LeagueWhitelist)
                                 .where(LeagueWhitelist.league_name == league_name)
                                 .values(enabled=False)
                             )
+                            
+                            # Blacklist home and away teams
+                            for t_name in [match.home_team, match.away_team]:
+                                if t_name:
+                                    try:
+                                        session.add(TeamBlacklist(team_name=t_name.strip()))
+                                    except Exception:
+                                        pass
+                                        
                             await session.commit()
-                            msg_text = f"🚫 <b>AUTOMATIC BLACKLIST!</b>\nLeague <b>{league_name}</b> has failed score fetching {strikes} times and has been <b>auto-blacklisted</b> to protect future picks!"
+                            msg_text = f"🚫 <b>AUTOMATIC BLACKLIST!</b>\nLeague <b>{league_name}</b> and teams <b>{match.home_team}</b> vs <b>{match.away_team}</b> failed score fetching {strikes} times and have been <b>auto-blacklisted</b>!"
                         else:
                             msg_text = f"⚠️ Score missing for fixture {fixture_id} (Strike {strikes}/3). Use <b>Update Match</b> below to resolve manually."
                             

@@ -536,8 +536,14 @@ async def post_step6_testimonial(bot: Bot, match) -> int | None:
     dm_text = random.choice(dms)
     time_str = datetime.now().strftime("%H:%M")
     admin_user = await _get_admin_username()
+    admin_tag = f"@{admin_user.lstrip('@')}" if admin_user else "@admin"
+    
+    # Format dm_text if it has {admin} placeholder
+    if "{admin}" in dm_text:
+        dm_text = dm_text.format(admin=admin_tag)
+        
     caption_template = random.choice(captions)
-    caption_text = caption_template.format(admin=admin_user)
+    caption_text = caption_template.format(admin=admin_tag)
 
     payload = {
         "message_text": dm_text,

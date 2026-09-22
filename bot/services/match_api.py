@@ -367,11 +367,12 @@ class MatchDataFetcher:
         # Major leagues to exclude — we only target obscure small leagues
         MAJOR_LEAGUES = {39, 140, 135, 78, 61, 2, 3, 848, 15}
 
-        from bot.core.database import async_session, LeagueWhitelist
+        from bot.core.database import async_session, LeagueWhitelist, TeamBlacklist
         from sqlalchemy import select
 
-        # Load DB whitelist (if any enabled entries exist)
+        # Load DB whitelist (if any enabled entries exist) and team blacklist
         whitelist_ids = set()
+        blacklisted_teams = set()
         try:
             async with async_session() as session:
                 q = await session.execute(select(LeagueWhitelist).where(LeagueWhitelist.enabled == True))
@@ -379,8 +380,13 @@ class MatchDataFetcher:
                 whitelist_ids = {int(r.api_football_id) for r in rows if r and r.api_football_id}
                 if whitelist_ids:
                     logger.info(f"[DB] Using league whitelist with {len(whitelist_ids)} entries.")
+                
+                q_teams = await session.execute(select(TeamBlacklist.team_name))
+                blacklisted_teams = {str(r).strip().lower() for r in q_teams.scalars().all() if r}
+                if blacklisted_teams:
+                    logger.info(f"[DB] Using team blacklist with {len(blacklisted_teams)} entries.")
         except Exception as e:
-            logger.warning(f"[DB] Could not load league whitelist: {e}")
+            logger.warning(f"[DB] Could not load league/team blacklists: {e}")
 
         async with aiohttp.ClientSession(headers=self.af_headers) as session:
             for day_offset in range(days_ahead):
@@ -410,6 +416,13 @@ class MatchDataFetcher:
                         fixture = f.get("fixture", {})
                         teams   = f.get("teams",   {})
                         league  = f.get("league",  {})
+
+                        home_name = teams.get("home", {}).get("name", "")
+                        away_name = teams.get("away", {}).get("name", "")
+
+                        if home_name.lower() in blacklisted_teams or away_name.lower() in blacklisted_teams:
+                            logger.info(f"[API] Skipping blacklisted team match: {home_name} vs {away_name}")
+                            continue
 
                         results.append({
                             "id":           fixture["id"],

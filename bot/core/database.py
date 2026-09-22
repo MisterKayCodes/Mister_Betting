@@ -201,6 +201,13 @@ class LeagueReport(Base):
     notified_admin = Column(Boolean, default=False)
 
 
+class TeamBlacklist(Base):
+    __tablename__ = "teams_blacklist"
+    id = Column(Integer, primary_key=True, index=True)
+    team_name = Column(String, unique=True, index=True)
+    added_at = Column(DateTime, server_default=text("(datetime('now'))"))
+
+
 class VIPCompensation(Base):
     __tablename__ = "vip_compensation"
     id = Column(Integer, primary_key=True, index=True)
