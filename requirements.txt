@@ -7,3 +7,5 @@ aiohttp
 aiofiles
 playwright
 python-dotenv
+uvicorn
+fastapi
