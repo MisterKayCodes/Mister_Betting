@@ -25,11 +25,70 @@ from bot.core.database import async_session, Admin, Match
 from sqlalchemy import select, func
 
 from bot.services.caption_engine import get_caption
-from bot.services.image_generator import ImageGenerator
 from bot.services.ui_utils import UIUtils
 
-image_gen = ImageGenerator()
 ui = UIUtils()
+
+async def _generate_betting_image(match_id: int, view_state: str, match_data: dict) -> str | None:
+    """
+    Calls Mister Image Factory to generate a betting slip image.
+    Returns local file path on success, or None on failure.
+    """
+    import aiohttp
+
+    if not IMAGE_FACTORY_API_KEY:
+        logger.warning("[IMAGE FACTORY] IMAGE_FACTORY_API_KEY not set in .env")
+        return None
+
+    payload = {
+        "league":           match_data["league"],
+        "homeTeam":         match_data["homeTeam"],
+        "awayTeam":         match_data["awayTeam"],
+        "date":             match_data["date"],
+        "time":             match_data["time"],
+        "homeScore":        match_data.get("homeScore"),
+        "awayScore":        match_data.get("awayScore"),
+        "claimedHomeScore": match_data.get("claimedHomeScore"),
+        "claimedAwayScore": match_data.get("claimedAwayScore"),
+        "stake":            match_data["stake"],
+        "odds":             match_data["odds"],
+        "payout":           match_data["payout"],
+        "balance":          match_data["balance"],
+        "cashout":          match_data["cashout"],
+        "adminUser":        match_data["adminUser"],
+    }
+
+    raw_urls = [IMAGE_FACTORY_URL, IMAGE_FACTORY_FALLBACK_URL]
+    urls = [
+        f"{base.rstrip('/')}/api/v1/generate/betting-slip?view_state={view_state}&api_key={IMAGE_FACTORY_API_KEY}"
+        for base in raw_urls if base
+    ]
+
+    img_bytes = None
+    async with aiohttp.ClientSession() as session:
+        for url in urls:
+            try:
+                async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                    if resp.status == 200:
+                        img_bytes = await resp.read()
+                        break
+                    else:
+                        logger.warning(f"[IMAGE FACTORY] HTTP {resp.status} for view={view_state} from {url}")
+            except Exception as e:
+                logger.warning(f"[IMAGE FACTORY] Could not reach {url}: {e}")
+
+    if not img_bytes:
+        logger.error(f"[IMAGE FACTORY] All URLs failed for match {match_id} view={view_state}")
+        return None
+
+    output_dir = os.path.join(os.getcwd(), "output_images")
+    os.makedirs(output_dir, exist_ok=True)
+    out_path = os.path.join(output_dir, f"match_{match_id}_{view_state}.png")
+    with open(out_path, "wb") as f:
+        f.write(img_bytes)
+
+    return out_path
+
 
 MAX_RETRIES = 3          # Maximum send attempts before giving up
 RETRY_DELAY = 5          # Seconds between retries
@@ -283,9 +342,9 @@ async def post_step1_preview(bot: Bot, match) -> int | None:
     logger.info(f"[STEP 1] Generating preview card for match {match.id}")
     admin_user = await _get_admin_username()
     data = await _build_match_data(match, admin_user=admin_user)
-    img_path = await image_gen.generate_image(
-        "preview-before", data, f"match_{match.id}_step1_preview.png"
-    )
+    img_path = await _generate_betting_image(match.id, "preview-before", data)
+    if not img_path:
+        return None
     caption = await get_caption("preview", admin_user)
     flip_hdr = await _get_flip_caption_header()
     msg_id = await _send_photo(bot, img_path, f"{flip_hdr}{caption}")
@@ -298,9 +357,9 @@ async def post_step2_urgency(bot: Bot, match) -> int | None:
     logger.info(f"[STEP 2] Generating urgency post for match {match.id}")
     admin_user = await _get_admin_username()
     data = await _build_match_data(match, admin_user=admin_user)
-    img_path = await image_gen.generate_image(
-        "preview-before", data, f"match_{match.id}_step2_urgency.png"
-    )
+    img_path = await _generate_betting_image(match.id, "preview-before", data)
+    if not img_path:
+        return None
     caption = await get_caption("urgency", admin_user)
     flip_hdr = await _get_flip_caption_header()
     msg_id = await _send_photo(bot, img_path, f"{flip_hdr}{caption}")
@@ -313,9 +372,9 @@ async def post_step3_black_box(bot: Bot, match) -> int | None:
     logger.info(f"[STEP 3] Generating black-box slip for match {match.id}")
     admin_user = await _get_admin_username()
     data = await _build_match_data(match, hide_odds=True, admin_user=admin_user)
-    img_path = await image_gen.generate_image(
-        "slip-before", data, f"match_{match.id}_step3_blackbox.png"
-    )
+    img_path = await _generate_betting_image(match.id, "slip-before", data)
+    if not img_path:
+        return None
     caption = await get_caption("black_box", admin_user)
     flip_hdr = await _get_flip_caption_header()
     msg_id = await _send_photo(bot, img_path, f"{flip_hdr}{caption}")
@@ -328,15 +387,16 @@ async def post_step4_result(bot: Bot, match) -> int | None:
     logger.info(f"[STEP 4] Generating result preview for match {match.id}")
     admin_user = await _get_admin_username()
     data = await _build_match_data(match, is_finished=True, admin_user=admin_user)
-    img_path = await image_gen.generate_image(
-        "preview-after", data, f"match_{match.id}_step4_result.png"
-    )
+    img_path = await _generate_betting_image(match.id, "preview-after", data)
+    if not img_path:
+        return None
     caption = await get_caption("result", admin_user)
     flip_hdr = await _get_flip_caption_header()
     msg_id = await _send_photo(bot, img_path, f"{flip_hdr}{caption}")
     if msg_id:
         _fire_and_track(trigger_simulator_hype(msg_id, "step4"))
     return msg_id
+
 
 
 async def _get_monthly_record_text(match) -> str:
@@ -459,10 +519,11 @@ async def post_step5_final_slip(bot: Bot, match, is_win: bool) -> int | None:
     view = "slip-won" if is_win else "slip-lost"
     admin_user = await _get_admin_username()
     data = await _build_match_data(match, is_win=is_win, is_finished=True, admin_user=admin_user)
-    img_path = await image_gen.generate_image(
-        view, data, f"match_{match.id}_step5_{'win' if is_win else 'loss'}.png"
-    )
+    img_path = await _generate_betting_image(match.id, view, data)
+    if not img_path:
+        return None
     pool = "win" if is_win else "lose"
+
     caption = await get_caption(pool, admin_user)
 
     record_text = await _get_monthly_record_text(match)
